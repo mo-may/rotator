@@ -13,6 +13,8 @@
     "dev:web": "vite",
     "start": "bun src/server.ts",
     "build": "vite build",
+    "build:exe": "bun run build && bun scripts/build-exe.ts",
+    "dev:desktop": "bun run build && bun scripts/build-launcher.ts && bun src/desktop/main.ts",
     "typecheck": "tsc --noEmit && svelte-check --tsconfig ./frontend/tsconfig.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

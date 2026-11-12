@@ -367,7 +367,7 @@ test('Minimalistische Listen zeigen die Kerndaten, Optionen bleiben per Tastatur
     .getByRole('link')
     .filter({ has: page.getByRole('heading', { name: task.name, exact: true }) });
   await expect(row).toContainText(selected.draw.name);
-  await expect(row).toContainText('2 von 2 aktiv');
+  await expect(row).toContainText('2 von 2 verfügbar');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(row).toContainText('Aktuell dran');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

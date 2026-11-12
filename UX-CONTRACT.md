@@ -73,6 +73,14 @@ Laden, Fehler und Wiederholen nutzen den bestehenden App-Rahmen. Hintergrundaktu
 
 ## Async and resilience
 
+### Windows-Startfenster
+
+`src/desktop/Launcher.cs` besitzt als native Variante Dateidialoge, Start-/Stoppaktionen, Status und Fokus. `src/desktop/session.ts` besitzt die Dateiprüfung, den lokalen HTTP-Server und die Datenbankfreigabe. Windows besitzt die geöffneten Dateidialoge und deren Tastaturbedienung. Die Web-Formulare und deren kanonische Komponenten bleiben unverändert.
+
+Beim Start bleibt der zuletzt erfolgreich verwendete Dateipfad vorbelegt. Es erfolgt kein automatisches Öffnen. „Datei öffnen“ verlangt eine vorhandene SQLite-Datei; „Neue Datei“ überschreibt keine Datei. Fehlende Dateien erzeugen keine Ersatzdatenbank. Fehler erhalten die Auswahl, zeigen einen lesbaren Status und erlauben einen erneuten Versuch. Während Start/Stopp sind weitere Aktionen gesperrt; der Status nennt den laufenden Vorgang. Während des Betriebs ist die Dateiauswahl gesperrt. Nach dem Stoppen kann eine andere Datei gewählt werden.
+
+„Stoppen und Datei freigeben“, „Beenden“ und das Schließen des Startfensters warten auf die Freigabe der Datenbank. Bei einem Fehler bleibt das Fenster geöffnet; es wird keine erfolgreiche Freigabe behauptet. Browser-Tabs haben keinen Einfluss auf den Lebenszyklus. Nach dem Stoppen wird die notwendige OneDrive-Synchronisierung genannt. Die App behauptet weder einen abgeschlossenen Upload noch eine rechnerübergreifende Sperre. Voraussetzung ist die vom Nutzer festgelegte einzelne Instanz im Team. `tests/desktop.test.ts` prüft Persistenz, Dateitransfer, Pfadspeicherung, Fehler und exklusiven Zugriff.
+
 Beim Anlegen einer Aufgabe können vorhandene Personen über native, beschriftete Checkboxen ausgewählt werden. Die Mehrfachauswahl ist optional und zunächst leer; „Alle auswählen“ und „Auswahl leeren“ ändern nur die Auswahl im Dialog. Eine begrenzte scrollbare Liste hält lange Teams und Namen bedienbar. Bestehende Aufgaben behalten die Teilnehmerverwaltung auf der Detailseite. Der Server speichert neue Aufgabe, aktive Zuordnungen mit Auswahlstand 0 und Protokoll atomar. Ungültige oder inzwischen entfernte Personen erzeugen keine Teilaufgabe. Bei Fehlern bleiben Name, Beschreibung und Auswahl zur Korrektur erhalten.
 
 Schreiben ist pessimistisch. Buttons blockieren doppelte Anfragen. Auswahl verwendet Request-ID und erwartete Revision gemäß Fachvertrag. Bei unklarer Netzwerkantwort wird dieselbe Anfrage geprüft. Konflikte laden den aktuellen Zustand und würfeln nicht automatisch erneut. Polling pausiert bei offenen Dialogen und während der Show. Namen und Kandidaten einer Auswahl stammen aus dem Server-Snapshot.

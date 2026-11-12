@@ -5,18 +5,44 @@ import { dirname } from 'node:path';
 /** Open and migrate one local SQLite database. Call close() on shutdown. */
 export function openDatabase(
   path = process.env.DATABASE_PATH ?? './data/chooser.sqlite3',
+  options: { create?: boolean; desktop?: boolean } = {},
 ): Database {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path, { create: true, strict: true });
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+  if (path !== ':memory:' && options.create !== false)
+    mkdirSync(dirname(path), { recursive: true });
+  const db = new Database(path, { create: options.create ?? true, strict: true });
   try {
+    db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    if (path !== ':memory:') {
+      // Desktop owns the file until shutdown. DELETE avoids persistent WAL sidecars
+      // in a synced folder; the regular server keeps WAL for concurrent requests.
+      if (options.desktop) db.exec('PRAGMA locking_mode = EXCLUSIVE;');
+      const mode = options.desktop ? 'DELETE' : 'WAL';
+      const result = db.query(`PRAGMA journal_mode = ${mode}`).get() as { journal_mode: string };
+      if (result.journal_mode.toUpperCase() !== mode) {
+        throw new Error('Die Datenbank ist noch geöffnet. Bitte die andere Instanz beenden.');
+      }
+      db.exec('PRAGMA synchronous = FULL;');
+    }
     migrate(db);
     return db;
   } catch (error) {
     db.close();
     throw error;
   }
+}
+
+/** Refuse a successful shutdown when another connection prevents a full checkpoint. */
+export function closeDatabase(db: Database): void {
+  const mode = db.query('PRAGMA journal_mode').get() as { journal_mode: string };
+  if (mode.journal_mode === 'wal') {
+    const checkpoint = db.query('PRAGMA wal_checkpoint(TRUNCATE)').get() as { busy: number };
+    if (checkpoint.busy !== 0) {
+      throw new Error(
+        'Die Datenbank ist noch geöffnet. Andere Zugriffe beenden und erneut stoppen.',
+      );
+    }
+  }
+  db.close(true);
 }
 
 /** Deliberately small, ordered migrations; never replace existing tables on startup. */

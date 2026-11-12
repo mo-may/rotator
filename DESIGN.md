@@ -81,6 +81,8 @@ Flache Arbeitsflächen mit dünnen Linien. Verwaltungsseiten verwenden keine sch
 
 ## Components
 
+Das Windows-Startfenster ist eine bewusst native Betriebssystemoberfläche. `src/desktop/Launcher.cs` besitzt Dateiauswahl, Buttons, Status und Fokus; WinForms/Systemfarben und Segoe UI besitzen Schrift, Skalierung, Dialoggeometrie und Kontrast. Es dupliziert keine Web-Komponenten oder Farbwerte. Die im Browser geöffnete Anwendung verwendet unverändert die Runtime-Tokens aus `app.css`, Fira Code und ihre vorhandene Theme-Auswahl.
+
 Buttons, Felder, Hinweise und Scrollbars konsumieren die Tokens aus `app.css`. Darstellung und Verhalten der geteilten Formdialoge, Mitgliederliste, Historie und Avatar-Komponente bleiben über Aufgaben und Team konsistent. [UX-CONTRACT.md](UX-CONTRACT.md) dokumentiert die bestehenden Verhaltensverantwortungen.
 
 Tokenpfad: `app.css` besitzt Palette, semantische Farben, `--radius`, `--page-max` und Schriftfamilien; App-Rahmen, Seiten und gemeinsame Komponenten konsumieren diese Variablen direkt. DESIGN.md spiegelt die Werte, es gibt keine generierten Theme-Adapter.

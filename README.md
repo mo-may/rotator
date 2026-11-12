@@ -52,6 +52,37 @@ Der Auswahlstand enthält Startwerte und begründete Korrekturen. Er ist deshalb
 
 Direkte Wiederholungen sind erlaubt, wenn die Minimumregel sie ergibt. Nach längerer Inaktivität kann eine zurückkehrende Person mehrmals hintereinander gewählt werden, bis sie aufgeholt hat. Es gibt keine vorab feststehende Warteschlange.
 
+## Windows-EXE und gemeinsame SQLite-Datei
+
+Die kurze Anleitung für Kollegen steht in [ANLEITUNG.md](ANLEITUNG.md).
+
+Unter Windows 10/11 kann Rotator als einzelne EXE verteilt werden. Bun und Docker werden auf den Rechnern der Nutzer nicht benötigt; das Windows-Startfenster verwendet das mit Windows gelieferte .NET Framework 4.x. Die EXE enthält Backend, Oberfläche, Schriften und das Startfenster. Zum Ausführen wird der kleine Fensterprozess automatisch in ein temporäres Verzeichnis entpackt und beim Beenden wieder entfernt.
+
+EXE unter Windows mit Bun bauen:
+
+```sh
+bun install --frozen-lockfile
+bun run build:exe
+```
+
+Ergebnis: `release/Rotator.exe` (Windows x64). Der Build verwendet den .NET-Framework-C#-Compiler aus Windows. Nur die EXE weitergeben; `dist`, Quellcode und Konfiguration müssen nicht mitgeliefert werden. Für die Entwicklung des Startfensters: `bun run dev:desktop`.
+
+1. `Rotator.exe` starten und **Datei öffnen…** oder **Neue Datei…** wählen. Bestehende Dateien werden beim Anlegen einer neuen Datenbank niemals überschrieben.
+2. Die SQLite-Datei im lokal über OneDrive synchronisierten SharePoint-Ordner auswählen. Bei gemeinsam genutzten Dateien in OneDrive **Immer auf diesem Gerät behalten** aktivieren. Eine SharePoint-Webadresse ist kein Dateipfad.
+3. Vollständige Synchronisierung abwarten und **Starten** drücken. Rotator merkt sich den erfolgreich geöffneten Pfad unter `%LOCALAPPDATA%\Rotator\settings.json` und öffnet den Standardbrowser. Beim nächsten Start ist dieser Pfad vorbelegt; die Anwendung startet erst mit **Starten**. Der Pfad kann vor dem Start oder nach dem Stoppen gewechselt werden.
+4. Das Startfenster während der Nutzung offen lassen. **Stoppen und Datei freigeben**, **Beenden** oder das Schließen des Startfensters stoppt zuerst den lokalen Server und schließt anschließend die Datenbank. Das Schließen des Browser-Tabs beendet Rotator nicht.
+5. Nach dem Stoppen den vollständigen OneDrive-Upload abwarten. Erst danach darf die nächste Person die Datei nach vollständigem Download öffnen.
+
+Die EXE verwendet einen freien Port ausschließlich auf `127.0.0.1`. Die Servervariablen `HOST`, `PORT`, `DATABASE_PATH` und `BASIC_AUTH_*` steuern weiterhin Bun-/Docker-Betrieb; die EXE verwendet ihre Dateiauswahl, direkten lokalen Zugriff und `Europe/Berlin`. Sie lädt keine `.env` aus dem Startverzeichnis.
+
+**Diese Betriebsart setzt eine einzige aktive Instanz im Team und abgeschlossene Synchronisierung zwischen den Nutzungen voraus.** SQLite sperrt die Datei auf demselben Rechner exklusiv; das ist keine rechnerübergreifende SharePoint-Sperre. Rotator prüft den OneDrive-Synchronisierungsstatus nicht. Die Freigabemeldung bedeutet, dass die Datenbank geschlossen ist, nicht dass der Upload abgeschlossen ist.
+
+Im EXE-Betrieb verwendet SQLite `journal_mode=DELETE`, `locking_mode=EXCLUSIVE` und `synchronous=FULL`. Während einer Änderung kann vorübergehend eine Journaldatei entstehen. Nach sauberem Stoppen enthält die Hauptdatei den vollständigen Stand. Keine temporären SQLite-Dateien während des Betriebs löschen oder die laufende Hauptdatei separat übertragen. Bei Absturz/erzwungenem Beenden zunächst auf demselben Rechner erneut öffnen und sauber stoppen, bevor die Datei weitergegeben wird.
+
+Fehlt eine gespeicherte Datei, zeigt Rotator einen Fehler; es erzeugt keine leere Ersatzdatenbank. Beschädigte Einstellungen können durch erneute Dateiauswahl ersetzt werden. Ältere Anwendungsversionen lehnen neuere Datenbankschemas ab. Vor Updates weiterhin ein konsistentes Backup erstellen.
+
+Für die erstmalige Übernahme des Docker-Datenbestands den bestehenden Backupbefehl verwenden und den fertigen Snapshot in den synchronisierten Ordner kopieren. Es wird kein vorhandenes Docker-Volume automatisch geändert. Dieselbe Datenbank nie gleichzeitig im EXE- und Serverbetrieb öffnen.
+
 ## Schnellstart mit Docker
 
 Voraussetzungen: Docker mit Compose und ein erreichbarer Docker-Daemon.

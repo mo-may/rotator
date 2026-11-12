@@ -17,13 +17,15 @@ import {
   absencesRequest,
   duplicateTaskRequest,
 } from './backend/request-schemas';
-import { openDatabase } from './db';
+import { closeDatabase, openDatabase } from './db';
 import { ChooserService, createService, DomainError } from './service';
 
 interface AppOptions {
   db?: Database;
   service?: ChooserService;
   auth?: Partial<AuthOptions>;
+  assets?: Readonly<Record<string, string>>;
+  staticRoot?: string;
 }
 
 function id(value: string): number {
@@ -187,14 +189,27 @@ export function createApp(options: AppOptions = {}) {
     ),
   );
 
-  const index = () => Bun.file('./dist/index.html').text();
+  const root = options.staticRoot ?? './dist';
+  const index = () => Bun.file(options.assets?.['/index.html'] ?? `${root}/index.html`).text();
   app.get('/', async (context) => context.html(await index()));
   app.get('/tasks/:id', async (context) => context.html(await index()));
   app.get('/team', async (context) => context.html(await index()));
   app.get('/stats', async (context) => context.html(await index()));
   app.get('/participants', async (context) => context.html(await index()));
-  app.get('/assets/*', serveStatic({ root: './dist' }));
-  app.get('/favicon.svg', serveStatic({ root: './dist' }));
+  if (options.assets) {
+    const assets = options.assets;
+    app.get('/assets/*', (context) => {
+      const path = assets[context.req.path];
+      return path ? new Response(Bun.file(path)) : context.notFound();
+    });
+    app.get('/favicon.svg', (context) => {
+      const path = assets['/favicon.svg'];
+      return path ? new Response(Bun.file(path)) : context.notFound();
+    });
+  } else {
+    app.get('/assets/*', serveStatic({ root }));
+    app.get('/favicon.svg', serveStatic({ root }));
+  }
   app.notFound((context) => context.text('Seite nicht gefunden.', 404));
   return app;
 }
@@ -219,7 +234,7 @@ if (import.meta.main) {
     if (shuttingDown) return;
     shuttingDown = true;
     await server.stop();
-    db.close();
+    closeDatabase(db);
     process.exit(0);
   };
   process.once('SIGTERM', shutdown);
