@@ -15,7 +15,7 @@
     place-items: center;
     border-radius: var(--radius);
     background: var(--tint);
-    color: var(--primary-hover);
+    color: var(--accent-text);
     font-size: 14px;
     font-weight: 750;
   }

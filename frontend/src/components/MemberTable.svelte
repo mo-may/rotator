@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Member, TaskDetail } from '../../../src/shared/contracts';
-  import Avatar from './Avatar.svelte';
+  import DataList from './DataList.svelte';
 
   let {
     task,
@@ -19,7 +19,7 @@
   const sortedMembers = $derived(
     [...task.members].sort(
       (a, b) =>
-        Number(b.active) - Number(a.active) ||
+        Number(b.active && !b.absent) - Number(a.active && !a.absent) ||
         a.count - b.count ||
         a.name.localeCompare(b.name, 'de'),
     ),
@@ -31,7 +31,6 @@
   <div class="section-heading">
     <div>
       <h2>Teilnehmer <span class="count-chip">{task.memberCount}</span></h2>
-      <p class="caption">Auswahlstand und Verfügbarkeit für diese Aufgabe.</p>
     </div>
     <button class="button secondary" disabled={busy || task.archived} onclick={onadd}
       >+ Teilnehmer hinzufügen</button
@@ -39,50 +38,41 @@
   </div>
 
   {#if task.members.length}
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr
-            ><th scope="col">Person</th><th scope="col">Status</th><th scope="col">Auswahlstand</th
-            ><th scope="col">Aktion</th></tr
-          >
-        </thead>
-        <tbody>
-          {#each sortedMembers as member (member.id)}
-            <tr class:inactive={!member.active}>
-              <td>
-                <div class="person">
-                  <Avatar name={member.name} />
-                  <div>
-                    <p class="name">{member.name}</p>
-                    {#if candidateIds.has(member.id)}<p class="in-pool">Im nächsten Lostopf</p>{/if}
-                  </div>
-                </div>
-              </td>
-              <td>
-                <button
-                  class="status"
-                  class:inactive={!member.active}
-                  disabled={busy || task.archived}
-                  aria-label="{member.name} {member.active ? 'deaktivieren' : 'aktivieren'}"
-                  aria-pressed={member.active}
-                  onclick={() => ontoggle(member)}>{member.active ? 'Aktiv' : 'Inaktiv'}</button
-                >
-              </td>
-              <td><span class="count">{member.count}</span></td>
-              <td
-                ><button
-                  class="button quiet small"
-                  disabled={busy || task.archived}
-                  onclick={() => oncorrect(member)}
-                  aria-label="Auswahlstand von {member.name} korrigieren">Stand korrigieren</button
-                ></td
-              >
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    {#snippet person(member: Member)}
+      <p class="list-title">{member.name}</p>
+      {#if member.absent}<p class="list-description">Abwesend · pausiert automatisch</p>{/if}
+      {#if candidateIds.has(member.id)}<p class="list-note">Im nächsten Lostopf</p>{/if}
+    {/snippet}
+    {#snippet status(member: Member)}
+      <button
+        class="status"
+        class:inactive={!member.active}
+        disabled={busy || task.archived}
+        aria-label="{member.name} {member.active ? 'deaktivieren' : 'aktivieren'}"
+        aria-pressed={member.active}
+        onclick={() => ontoggle(member)}>{member.active ? 'Aktiv' : 'Inaktiv'}</button
+      >
+    {/snippet}
+    {#snippet count(member: Member)}<span class="count">{member.count}</span>{/snippet}
+    {#snippet action(member: Member)}
+      <button
+        class="button quiet small"
+        disabled={busy || task.archived}
+        onclick={() => oncorrect(member)}
+        aria-label="Auswahlstand von {member.name} korrigieren">Stand korrigieren</button
+      >
+    {/snippet}
+    <DataList
+      label="Teilnehmer"
+      items={sortedMembers}
+      columns={[
+        { label: 'Person', content: person },
+        { label: 'Status', content: status },
+        { label: 'Auswahlstand', content: count },
+        { label: 'Aktion', content: action },
+      ]}
+      muted={(member) => !member.active || !!member.absent}
+    />
     <p class="table-note">
       „Im nächsten Lostopf“ markiert aktive Personen mit dem niedrigsten Auswahlstand.
     </p>
@@ -97,56 +87,7 @@
   .section-heading {
     align-items: center;
   }
-  .caption {
-    color: var(--on-dark-muted);
-    margin-top: 7px;
-  }
-  .table-wrap {
-    color: var(--ink);
-    overflow-x: auto;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--surface);
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    text-align: left;
-  }
-  th {
-    padding: 14px 17px;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface-muted);
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 650;
-    white-space: nowrap;
-  }
-  td {
-    padding: 17px;
-    border-bottom: 1px solid var(--line);
-    font-size: 14px;
-  }
-  tr:last-child td {
-    border-bottom: 0;
-  }
-  .person {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-  }
-  .name {
-    font-weight: 650;
-    overflow-wrap: anywhere;
-  }
-  .in-pool {
-    margin-top: 3px;
-    color: var(--primary-hover);
-    font-size: 12px;
-  }
   .count {
-    font-size: 22px;
-    font-weight: 750;
     font-variant-numeric: tabular-nums;
   }
   .status {
@@ -158,8 +99,15 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--tint);
-    color: var(--primary-hover);
+    color: var(--accent-text);
     font-size: 13px;
+  }
+  .status:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: var(--tint);
+  }
+  .status:active:not(:disabled) {
+    filter: brightness(0.95);
   }
   .status::before {
     width: 6px;
@@ -173,12 +121,9 @@
     background: var(--surface-muted);
     color: var(--muted);
   }
-  tr.inactive .name {
-    color: var(--muted);
-  }
   .table-note {
     margin: 12px 2px 0;
-    color: var(--on-dark-muted);
+    color: var(--muted);
     font-size: 13px;
   }
   .table-empty {
@@ -190,36 +135,14 @@
     text-align: center;
     font-size: 14px;
   }
-  @media (max-width: 1050px) {
-    th,
-    td {
-      padding-inline: 12px;
-    }
-  }
   @media (max-width: 650px) {
     .section-heading {
       align-items: flex-start;
       flex-direction: column;
     }
-    .person :global(.avatar) {
-      display: none;
-    }
-    th,
-    td {
-      padding: 13px 10px;
-    }
-    th {
-      font-size: 12px;
-    }
-    td {
-      font-size: 13px;
-    }
     .button.small {
-      min-width: 110px;
-      font-size: 12px;
-    }
-    .count {
-      font-size: 20px;
+      padding-inline: 0;
+      text-align: left;
     }
   }
 </style>

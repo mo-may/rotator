@@ -1,5 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import { randomInt, randomUUID } from 'node:crypto';
+import { statsPeriodStart, customStatsWindow } from './stats-period';
+import { isStatsDateRange } from './shared/stats-range';
+import { calendarDate, isAbsent, nextDue, validAbsences, validSchedule } from './shared/scheduling';
+import type { Absence, TaskSchedule } from './shared/contracts';
 import type {
   AppState,
   AuditEvent,
@@ -12,6 +16,12 @@ import type {
   ParticipantRemoval,
   TaskDetail,
   TaskSummary,
+  Stats,
+  StatsPeriod,
+  StatsDateRange,
+  StatsEntry,
+  StatsParticipant,
+  StatsTask,
 } from './shared/contracts';
 
 const MAX_COUNT = 1_000_000_000;
@@ -22,6 +32,8 @@ type TaskRow = {
   archived_at: string | null;
   current_draw_id: string | null;
   version: number;
+  schedule_json: string | null;
+  next_due_date: string | null;
 };
 type DrawRow = {
   id: string;
@@ -39,8 +51,17 @@ type DrawRow = {
   result_version: number;
   created_at: string;
   undone_at: string | null;
+  manual: number;
+  previous_due_date: string | null;
 };
-type MemberRow = { id: number; participantId: number; name: string; active: number; count: number };
+type MemberRow = {
+  id: number;
+  participantId: number;
+  name: string;
+  active: number;
+  count: number;
+  absences_json: string;
+};
 type VersionInput = { expectedVersion: number };
 
 export class DomainError extends Error {
@@ -58,6 +79,7 @@ export interface ServiceOptions {
   /** Injectable only for deterministic domain tests; production uses node:crypto.randomInt. */
   pickIndex?: (length: number) => number;
   now?: () => string;
+  timeZone?: string;
 }
 
 function text(value: unknown, label: string, max: number, optional = false): string {
@@ -93,7 +115,7 @@ function mapDraw(row: DrawRow): Draw {
     participantId: row.participant_id,
     membershipId: row.membership_id,
     name: row.winner_name,
-    method: row.method,
+    method: row.manual ? 'manual' : row.method,
     countBefore: row.count_before,
     countAfter: row.count_after,
     candidates: JSON.parse(row.candidates_json) as CandidateSnapshot[],
@@ -106,6 +128,7 @@ function mapDraw(row: DrawRow): Draw {
 export class ChooserService {
   private pickIndex: (length: number) => number;
   private now: () => string;
+  private timeZone: string;
 
   constructor(
     private db: Database,
@@ -113,6 +136,34 @@ export class ChooserService {
   ) {
     this.pickIndex = options.pickIndex ?? randomInt;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.timeZone = options.timeZone ?? (process.env.APP_TIMEZONE || 'Europe/Berlin');
+  }
+
+  private today(): string {
+    return calendarDate(this.now(), this.timeZone);
+  }
+
+  private mapMember(row: MemberRow, today = this.today()): Member {
+    const { absences_json, ...member } = row;
+    return {
+      ...member,
+      active: !!row.active,
+      absent: isAbsent(JSON.parse(absences_json), today),
+    };
+  }
+
+  private members(taskId: number, today = this.today()): Member[] {
+    return this.db
+      .query<MemberRow, [number]>(
+        `
+      SELECT m.id, m.participant_id AS participantId, p.name, m.active, m.count, p.absences_json
+      FROM task_memberships m JOIN participants p ON p.id = m.participant_id
+      WHERE m.task_id = ? AND p.deleted_at IS NULL
+      ORDER BY m.active DESC, m.count, p.name COLLATE NOCASE, m.id
+    `,
+      )
+      .all(taskId)
+      .map((row) => this.mapMember(row, today));
   }
 
   private taskRow(id: number): TaskRow {
@@ -125,7 +176,7 @@ export class ChooserService {
     const row = this.db
       .query<MemberRow, [number, number]>(
         `
-          SELECT m.id, m.participant_id AS participantId, p.name, m.active, m.count
+          SELECT m.id, m.participant_id AS participantId, p.name, m.active, m.count, p.absences_json
           FROM task_memberships AS m
           JOIN participants AS p ON p.id = m.participant_id
           WHERE m.task_id = ? AND m.id = ? AND p.deleted_at IS NULL
@@ -139,7 +190,7 @@ export class ChooserService {
         'Diese Person gehört nicht zu dieser Aufgabe.',
       );
     }
-    return { ...row, active: !!row.active };
+    return this.mapMember(row);
   }
 
   private drawRow(id: string): DrawRow {
@@ -201,29 +252,100 @@ export class ChooserService {
         .all()
         .map(({ id }) => this.summary(this.taskRow(id))),
       participants: this.db
-        .query<Participant, []>(
+        .query<Participant & { absences_json: string; availability_version: number }, []>(
           `
-            SELECT id, name, created_at AS createdAt
+            SELECT id, name, created_at AS createdAt, absences_json, availability_version
             FROM participants
             WHERE deleted_at IS NULL
             ORDER BY name COLLATE NOCASE, id
           `,
         )
-        .all(),
+        .all()
+        .map(({ absences_json, availability_version, ...person }) => ({
+          ...person,
+          absences: JSON.parse(absences_json) as Absence[],
+          absent: isAbsent(JSON.parse(absences_json), this.today()),
+          availabilityVersion: availability_version,
+        })),
+    }))();
+  }
+
+  stats(period: StatsPeriod = 'all', range?: StatsDateRange, timeZone = 'Europe/Berlin'): Stats {
+    let to = this.now();
+    let from: string | null;
+    if (period === 'custom') {
+      if (!isStatsDateRange(range))
+        throw new DomainError(
+          400,
+          'INVALID_INPUT',
+          'Bitte gib ein gültiges Start- und Enddatum an. Das Enddatum darf nicht vor dem Startdatum liegen.',
+        );
+      ({ from, to } = customStatsWindow(range, timeZone));
+      if (from > to)
+        throw new DomainError(
+          400,
+          'INVALID_INPUT',
+          'Der gewählte Zeitraum enthält in dieser Zeitzone keinen Kalendertag.',
+        );
+    } else from = statsPeriodStart(period, to);
+    return this.db.transaction(() => ({
+      period,
+      from,
+      to,
+      ...(period === 'custom' ? { startDate: range!.start, endDate: range!.end } : {}),
+      participants: this.db
+        .query<Omit<StatsParticipant, 'removed'> & { removed: number }, []>(
+          `
+        SELECT id, name, deleted_at IS NOT NULL AS removed
+        FROM participants ORDER BY name COLLATE NOCASE, id
+      `,
+        )
+        .all()
+        .map((person) => ({ ...person, removed: !!person.removed })),
+      tasks: this.db
+        .query<Omit<StatsTask, 'archived'> & { archived: number }, []>(
+          `
+        SELECT id, name, archived_at IS NOT NULL AS archived
+        FROM tasks ORDER BY name COLLATE NOCASE, id
+      `,
+        )
+        .all()
+        .map((task) => ({ ...task, archived: !!task.archived })),
+      entries: this.db
+        .query<
+          Omit<StatsEntry, 'active'> & { active: number },
+          [string | null, string | null, string]
+        >(
+          `
+        SELECT m.id, m.participant_id AS participantId, m.task_id AS taskId,
+          m.active, m.count,
+          COALESCE(d.selections, 0) AS selections,
+          COALESCE(d.undoneSelections, 0) AS undoneSelections,
+          d.lastSelectedAt
+        FROM task_memberships AS m
+        LEFT JOIN (
+          SELECT membership_id,
+            SUM(undone_at IS NULL) AS selections,
+            SUM(undone_at IS NOT NULL) AS undoneSelections,
+            MAX(CASE WHEN undone_at IS NULL THEN created_at END) AS lastSelectedAt
+          FROM draws
+          WHERE (? IS NULL OR (created_at >= ? AND created_at <= ?))
+          GROUP BY membership_id
+        ) AS d ON d.membership_id = m.id
+        ORDER BY m.participant_id, m.task_id, m.id
+      `,
+        )
+        .all(from, from, to)
+        .map((entry) => ({ ...entry, active: !!entry.active })),
     }))();
   }
 
   private summary(row: TaskRow): TaskSummary {
-    const counts = this.db
-      .query<{ activeCount: number; memberCount: number }, [number]>(
-        `
-          SELECT COALESCE(SUM(m.active), 0) AS activeCount, COUNT(*) AS memberCount
-          FROM task_memberships AS m
-          JOIN participants AS p ON p.id = m.participant_id
-          WHERE m.task_id = ? AND p.deleted_at IS NULL
-        `,
-      )
-      .get(row.id)!;
+    const members = this.members(row.id);
+    const counts = {
+      activeCount: members.filter((member) => member.active && !member.absent).length,
+      memberCount: members.length,
+    };
     let currentDraw = row.current_draw_id ? mapDraw(this.drawRow(row.current_draw_id)) : null;
     if (currentDraw) {
       // Current views follow renames; historical draw snapshots keep the original name.
@@ -242,25 +364,17 @@ export class ChooserService {
       version: row.version,
       ...counts,
       currentDraw,
+      schedule: row.schedule_json ? (JSON.parse(row.schedule_json) as TaskSchedule) : null,
+      dueDate: row.next_due_date,
+      due: !row.archived_at && !!row.next_due_date && row.next_due_date <= this.today(),
     };
   }
 
   getTask(id: number): TaskDetail {
     return this.db.transaction(() => {
       const row = this.taskRow(id);
-      const members = this.db
-        .query<MemberRow, [number]>(
-          `
-            SELECT m.id, m.participant_id AS participantId, p.name, m.active, m.count
-            FROM task_memberships AS m
-            JOIN participants AS p ON p.id = m.participant_id
-            WHERE m.task_id = ? AND p.deleted_at IS NULL
-            ORDER BY m.active DESC, m.count ASC, p.name COLLATE NOCASE, m.id
-          `,
-        )
-        .all(id)
-        .map((member) => ({ ...member, active: !!member.active }));
-      const active = members.filter((member) => member.active);
+      const members = this.members(id);
+      const active = members.filter((member) => member.active && !member.absent);
       const min = active[0]?.count ?? null;
       const summary = this.summary(row);
       return {
@@ -303,6 +417,13 @@ export class ChooserService {
   createTask(input: CreateTaskInput): TaskDetail {
     const name = text(input.name, 'Aufgabenname', 100);
     const description = text(input.description ?? '', 'Beschreibung', 2000, true);
+    const schedule = input.schedule ?? null;
+    if (schedule !== null && !validSchedule(schedule))
+      throw new DomainError(
+        400,
+        'INVALID_INPUT',
+        'Bitte wähle eine gültige Wiederholung und ein Startdatum.',
+      );
     const participantIds = input.participantIds === undefined ? [] : input.participantIds;
     if (
       !Array.isArray(participantIds) ||
@@ -330,14 +451,23 @@ export class ChooserService {
         });
         const at = this.now();
         const result = this.db
-          .query('INSERT INTO tasks(name, description, created_at, updated_at) VALUES (?, ?, ?, ?)')
-          .run(name, description, at, at);
+          .query(
+            'INSERT INTO tasks(name, description, created_at, updated_at, schedule_json, next_due_date) VALUES (?, ?, ?, ?, ?, ?)',
+          )
+          .run(
+            name,
+            description,
+            at,
+            at,
+            schedule ? JSON.stringify(schedule) : null,
+            schedule?.startDate ?? null,
+          );
         const id = Number(result.lastInsertRowid);
         this.event(
           id,
           'task_created',
           `Aufgabe „${name}“ wurde angelegt.`,
-          { name, description, participantIds },
+          { name, description, participantIds, schedule },
           at,
         );
         const addParticipant = this.db.query(
@@ -361,7 +491,12 @@ export class ChooserService {
 
   updateTask(
     id: number,
-    input: VersionInput & { name?: string; description?: string; archived?: boolean },
+    input: VersionInput & {
+      name?: string;
+      description?: string;
+      archived?: boolean;
+      schedule?: TaskSchedule | null;
+    },
   ): TaskDetail {
     return this.db
       .transaction(() => {
@@ -376,10 +511,25 @@ export class ChooserService {
           throw new DomainError(400, 'INVALID_INPUT', 'Archivstatus muss wahr oder falsch sein.');
         }
         const archived = input.archived ?? !!task.archived_at;
+        const schedule =
+          input.schedule === undefined
+            ? task.schedule_json
+              ? (JSON.parse(task.schedule_json) as TaskSchedule)
+              : null
+            : input.schedule;
+        if (schedule !== null && !validSchedule(schedule))
+          throw new DomainError(
+            400,
+            'INVALID_INPUT',
+            'Bitte wähle eine gültige Wiederholung und ein Startdatum.',
+          );
+        const scheduleJson = schedule ? JSON.stringify(schedule) : null;
+        const scheduleChanged = scheduleJson !== task.schedule_json;
         if (
           name === task.name &&
           description === task.description &&
-          archived === !!task.archived_at
+          archived === !!task.archived_at &&
+          !scheduleChanged
         ) {
           return this.getTask(id);
         }
@@ -388,11 +538,19 @@ export class ChooserService {
           .query(
             `
               UPDATE tasks
-              SET name = ?, description = ?, archived_at = ?, updated_at = ?, version = version + 1
+              SET name = ?, description = ?, archived_at = ?, updated_at = ?, schedule_json = ?, next_due_date = ?, version = version + 1
               WHERE id = ?
             `,
           )
-          .run(name, description, archived ? (task.archived_at ?? at) : null, at, id);
+          .run(
+            name,
+            description,
+            archived ? (task.archived_at ?? at) : null,
+            at,
+            scheduleJson,
+            scheduleChanged ? (schedule?.startDate ?? null) : task.next_due_date,
+            id,
+          );
         this.event(
           id,
           'task_updated',
@@ -407,7 +565,7 @@ export class ChooserService {
               description: task.description,
               archived: !!task.archived_at,
             },
-            after: { name, description, archived },
+            after: { name, description, archived, schedule },
           },
           at,
         );
@@ -423,6 +581,106 @@ export class ChooserService {
       .query('INSERT INTO participants(name, created_at) VALUES (?, ?)')
       .run(name, at);
     return { id: Number(result.lastInsertRowid), name, createdAt: at };
+  }
+
+  setAbsences(id: number, input: VersionInput & { absences: Absence[] }): Participant {
+    if (!validAbsences(input.absences))
+      throw new DomainError(
+        400,
+        'INVALID_INPUT',
+        'Bitte gib gültige Abwesenheiten mit Start- und Enddatum an (höchstens 100).',
+      );
+    integer(input.expectedVersion, 'Abwesenheitsversion', Number.MAX_SAFE_INTEGER);
+    const absences = [...input.absences].sort((a, b) => a.start.localeCompare(b.start));
+    if (absences.some((range, index) => index > 0 && range.start <= absences[index - 1]!.end))
+      throw new DomainError(400, 'INVALID_INPUT', 'Abwesenheiten dürfen sich nicht überschneiden.');
+    return this.db
+      .transaction(() => {
+        const person = this.db
+          .query<
+            {
+              id: number;
+              name: string;
+              createdAt: string;
+              availability_version: number;
+              absences_json: string;
+            },
+            [number]
+          >(
+            'SELECT id, name, created_at AS createdAt, availability_version, absences_json FROM participants WHERE id = ? AND deleted_at IS NULL',
+          )
+          .get(id);
+        if (!person)
+          throw new DomainError(404, 'PARTICIPANT_NOT_FOUND', 'Diese Person wurde nicht gefunden.');
+        if (person.availability_version !== input.expectedVersion)
+          throw new DomainError(
+            409,
+            'VERSION_CONFLICT',
+            'Die Abwesenheiten wurden inzwischen geändert. Bitte prüfe den aktuellen Stand.',
+          );
+        const changed = JSON.stringify(absences) !== person.absences_json;
+        if (changed) {
+          const at = this.now();
+          this.db
+            .query(
+              'UPDATE participants SET absences_json = ?, availability_version = availability_version + 1 WHERE id = ?',
+            )
+            .run(JSON.stringify(absences), id);
+          for (const task of this.db
+            .query<{ task_id: number }, [number]>(
+              'SELECT task_id FROM task_memberships WHERE participant_id = ?',
+            )
+            .all(id)) {
+            this.bump(task.task_id, at);
+            this.event(
+              task.task_id,
+              'absences_changed',
+              `Abwesenheiten von ${person.name}: ${absences.length ? absences.map(({ start, end }) => `${start} bis ${end}`).join('; ') : 'keine Zeiträume'}. Auswahlstände bleiben erhalten.`,
+              { participantId: id, before: JSON.parse(person.absences_json), after: absences },
+              at,
+            );
+          }
+        }
+        return {
+          id,
+          name: person.name,
+          createdAt: person.createdAt,
+          absences,
+          absent: isAbsent(absences, this.today()),
+          availabilityVersion: person.availability_version + Number(changed),
+        };
+      })
+      .immediate();
+  }
+
+  duplicateTask(id: number, input: VersionInput & { name: string }): TaskDetail {
+    return this.db
+      .transaction(() => {
+        const source = this.taskRow(id);
+        this.checkVersion(source, input.expectedVersion);
+        const members = this.members(id);
+        const copy = this.createTask({
+          name: input.name,
+          description: source.description,
+          participantIds: members.map((member) => member.participantId),
+          schedule: source.schedule_json ? JSON.parse(source.schedule_json) : null,
+        });
+        for (const member of members.filter((member) => !member.active))
+          this.db
+            .query(
+              'UPDATE task_memberships SET active = 0 WHERE task_id = ? AND participant_id = ?',
+            )
+            .run(copy.id, member.participantId);
+        this.event(
+          copy.id,
+          'task_duplicated',
+          `Aus „${source.name}“ dupliziert. Alle Auswahlstände starten bei 0; bisherige Auswahlen werden nicht übernommen.`,
+          { sourceTaskId: id },
+          this.now(),
+        );
+        return this.getTask(copy.id);
+      })
+      .immediate();
   }
 
   renameParticipant(id: number, input: { name: string }): Participant {
@@ -497,11 +755,16 @@ export class ChooserService {
             .query(
               `
               UPDATE tasks
-              SET current_draw_id = ?, version = version + 1, updated_at = ?
+              SET current_draw_id = ?, version = version + 1, updated_at = ?, next_due_date = ?
               WHERE id = ?
             `,
             )
-            .run(clearsCurrent ? null : task.current_draw_id, removedAt, task.id);
+            .run(
+              clearsCurrent ? null : task.current_draw_id,
+              removedAt,
+              task.next_due_date,
+              task.id,
+            );
           this.event(
             task.id,
             'participant_removed',
@@ -554,16 +817,12 @@ export class ChooserService {
             'Diese Person ist der Aufgabe bereits zugeordnet.',
           );
         }
-        const count = this.db
-          .query<{ count: number }, [number]>(
-            `
-              SELECT COALESCE(MIN(m.count), 0) AS count
-              FROM task_memberships AS m
-              JOIN participants AS p ON p.id = m.participant_id
-              WHERE m.task_id = ? AND m.active = 1 AND p.deleted_at IS NULL
-            `,
-          )
-          .get(taskId)!.count;
+        const activeMembers = this.members(taskId).filter(
+          (member) => member.active && !member.absent,
+        );
+        const count = activeMembers.length
+          ? Math.min(...activeMembers.map((member) => member.count))
+          : 0;
         const at = this.now();
         this.db
           .query(
@@ -655,9 +914,17 @@ export class ChooserService {
       .immediate();
   }
 
-  draw(taskId: number, input: VersionInput & { requestId: string }): DrawResponse {
+  draw(
+    taskId: number,
+    input: VersionInput & { requestId: string; membershipId?: number },
+  ): DrawResponse {
     const requestId = text(input.requestId, 'Anfrage-ID', 128);
     integer(input.expectedVersion, 'Aufgabenversion', Number.MAX_SAFE_INTEGER);
+    if (
+      input.membershipId !== undefined &&
+      (!Number.isSafeInteger(input.membershipId) || input.membershipId < 1)
+    )
+      throw new DomainError(400, 'INVALID_INPUT', 'Bitte wähle eine gültige Person.');
     return this.db
       .transaction(() => {
         const task = this.taskRow(taskId);
@@ -667,7 +934,11 @@ export class ChooserService {
           )
           .get(taskId, requestId);
         if (existing) {
-          if (existing.expected_version !== input.expectedVersion) {
+          if (
+            existing.expected_version !== input.expectedVersion ||
+            !!existing.manual !== (input.membershipId !== undefined) ||
+            (existing.manual && existing.membership_id !== input.membershipId)
+          ) {
             throw new DomainError(
               409,
               'REQUEST_ID_CONFLICT',
@@ -678,28 +949,21 @@ export class ChooserService {
         }
         this.checkVersion(task, input.expectedVersion);
         this.editable(task);
-        const candidates = this.db
-          .query<MemberRow, [number, number]>(
-            `
-              SELECT m.id, m.participant_id AS participantId, p.name, m.active, m.count
-              FROM task_memberships AS m
-              JOIN participants AS p ON p.id = m.participant_id
-              WHERE m.task_id = ? AND m.active = 1 AND p.deleted_at IS NULL
-                AND m.count = (
-                  SELECT MIN(candidate.count)
-                  FROM task_memberships AS candidate
-                  JOIN participants AS person ON person.id = candidate.participant_id
-                  WHERE candidate.task_id = ? AND candidate.active = 1 AND person.deleted_at IS NULL
-                )
-              ORDER BY m.id
-            `,
-          )
-          .all(taskId, taskId);
+        const at = this.now();
+        const today = calendarDate(at, this.timeZone);
+        const available = this.members(taskId, today).filter(
+          (member) => member.active && !member.absent,
+        );
+        const minimum = Math.min(...available.map((member) => member.count));
+        const candidates =
+          input.membershipId === undefined
+            ? available.filter((member) => member.count === minimum).sort((a, b) => a.id - b.id)
+            : available.filter((member) => member.id === input.membershipId);
         if (!candidates.length) {
           throw new DomainError(
             409,
             'NO_ACTIVE_MEMBERS',
-            'Es gibt keine aktiven Teilnehmer für diese Aufgabe.',
+            'Die gewünschte Auswahl ist derzeit nicht möglich. Es werden nur aktive, anwesende Teilnehmer berücksichtigt.',
           );
         }
         const index = candidates.length === 1 ? 0 : this.pickIndex(candidates.length);
@@ -714,7 +978,6 @@ export class ChooserService {
             'Der maximale Auswahlstand ist erreicht. Bitte korrigiere den Stand mit Begründung.',
           );
         }
-        const at = this.now();
         const id = randomUUID();
         const snapshot: CandidateSnapshot[] = candidates.map((member) => ({
           membershipId: member.id,
@@ -728,9 +991,9 @@ export class ChooserService {
               INSERT INTO draws (
                 id, task_id, membership_id, participant_id, winner_name, method,
                 count_before, count_after, candidates_json, previous_draw_id,
-                request_id, expected_version, result_version, created_at
+                request_id, expected_version, result_version, created_at, manual, previous_due_date
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
           .run(
@@ -748,16 +1011,33 @@ export class ChooserService {
             input.expectedVersion,
             task.version + 1,
             at,
+            input.membershipId === undefined ? 0 : 1,
+            task.next_due_date,
           );
         this.db
           .query(
             `
               UPDATE tasks
-              SET current_draw_id = ?, version = version + 1, updated_at = ?
+              SET current_draw_id = ?, version = version + 1, updated_at = ?, next_due_date = ?
               WHERE id = ?
             `,
           )
-          .run(id, at, taskId);
+          .run(
+            id,
+            at,
+            task.schedule_json && task.next_due_date
+              ? nextDue(JSON.parse(task.schedule_json), task.next_due_date, today)
+              : null,
+            taskId,
+          );
+        if (input.membershipId !== undefined)
+          this.event(
+            taskId,
+            'manual_takeover',
+            `${winner.name} hat die Aufgabe manuell übernommen (${winner.count} → ${winner.count + 1}).`,
+            { drawId: id, membershipId: winner.id },
+            at,
+          );
         return { draw: mapDraw(this.drawRow(id)), task: this.getTask(taskId), replayed: false };
       })
       .immediate();
@@ -805,11 +1085,11 @@ export class ChooserService {
           .query(
             `
               UPDATE tasks
-              SET current_draw_id = ?, version = version + 1, updated_at = ?
+              SET current_draw_id = ?, version = version + 1, updated_at = ?, next_due_date = ?
               WHERE id = ?
             `,
           )
-          .run(draw.previous_draw_id, at, taskId);
+          .run(draw.previous_draw_id, at, draw.previous_due_date, taskId);
         this.event(
           taskId,
           'draw_undone',

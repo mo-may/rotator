@@ -8,6 +8,15 @@ export function initials(name: string): string {
     .toUpperCase();
 }
 
+export function formatDay(value: string): string {
+  return new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date(`${value}T12:00:00Z`));
+}
+
 export function formatDate(value: string, timeZone: string, short = false): string {
   return new Intl.DateTimeFormat('de-DE', {
     timeZone,

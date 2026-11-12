@@ -680,7 +680,7 @@ describe('Personen aus dem Team entfernen', () => {
     expect(service.getTask(task.id)).toEqual(result.task);
   });
 
-  test('Migration 2 ergänzt eine befüllte Version-1-Datenbank verlustfrei', () => {
+  test('Migrationen 2 und 3 ergänzen eine befüllte Version-1-Datenbank verlustfrei', () => {
     const task = taskWith('Anna', 'Ben');
     const result = service.draw(task.id, {
       requestId: 'legacy-draw',
@@ -691,7 +691,13 @@ describe('Personen aus dem Team entfernen', () => {
     db.exec(`
       DROP INDEX participants_by_visibility;
       ALTER TABLE participants DROP COLUMN deleted_at;
-      DELETE FROM schema_migrations WHERE version = 2;
+      ALTER TABLE participants DROP COLUMN absences_json;
+      ALTER TABLE participants DROP COLUMN availability_version;
+      ALTER TABLE tasks DROP COLUMN schedule_json;
+      ALTER TABLE tasks DROP COLUMN next_due_date;
+      ALTER TABLE draws DROP COLUMN manual;
+      ALTER TABLE draws DROP COLUMN previous_due_date;
+      DELETE FROM schema_migrations WHERE version >= 2;
     `);
 
     migrate(db);
@@ -701,7 +707,7 @@ describe('Personen aus dem Team entfernen', () => {
       db
         .query<{ version: number }, []>('SELECT MAX(version) AS version FROM schema_migrations')
         .get()?.version,
-    ).toBe(2);
+    ).toBe(3);
     expect(db.query('PRAGMA foreign_key_check').all()).toHaveLength(0);
     expect(
       db

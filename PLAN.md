@@ -12,7 +12,7 @@ Ein kleines Teamwerkzeug zur fairen Bestimmung der nächsten Person für wiederk
 
 1. Personen werden zentral angelegt und Aufgaben zugeordnet. Pro Zuordnung gibt es einen eigenen Aktivstatus und nichtnegativen ganzzahligen Auswahlstand.
 2. Neue Zuordnungen starten beim kleinsten Auswahlstand der zuvor aktiven Mitglieder dieser Aufgabe. Gibt es keine aktiven Mitglieder, starten sie bei 0. Es wird kein fiktiver historischer Auswahlvorgang erzeugt; der Startwert wird protokolliert.
-3. Bei jeder Auswahl werden ausschließlich aktive Mitglieder berücksichtigt. Nur Personen mit dem niedrigsten aktiven Stand kommen in die Auswahlmenge.
+3. Bei der regulären Auswahl werden ausschließlich aktive, aktuell nicht abwesende Mitglieder berücksichtigt. Nur Personen mit dem niedrigsten verfügbaren Stand kommen in die Auswahlmenge. Die ausdrücklich gewählte manuelle Übernahme darf davon abweichen und berücksichtigt jede aktive, anwesende Person.
 4. Ein einzelner Kandidat wird direkt bestimmt. Bei Gleichstand erfolgt eine gleichverteilte kryptografische Zufallsauswahl auf dem Server.
 5. Eine erfolgreich gespeicherte Auswahl gilt sofort als Übernahme: Genau der Auswahlstand des Gewinners wird um 1 erhöht. Eine weitere Bestätigung oder Erledigt-Markierung ist nicht vorgesehen.
 6. Aufgaben haben jeweils einen eigenen aktuellen Gewinner. Er bleibt bis zur nächsten Auswahl, deren Rücknahme oder der Entfernung der gewählten Person sichtbar. Spätere Inaktivierung entfernt keine vergangene Auswahl.
@@ -29,6 +29,18 @@ Ein kleines Teamwerkzeug zur fairen Bestimmung der nächsten Person für wiederk
 - Letzte Auswahl rückgängig machen, sofern danach keine relevante Änderung der Aufgabe erfolgte. Gewinnerstand reduzieren, vorherigen Gewinner wiederherstellen, Vorgang sichtbar stornieren. Keine beliebige historische Rückabwicklung.
 - Interner Betrieb ohne Login als Standard; optional HTTP-Basic-Authentifizierung mit einem gemeinsamen Benutzernamen und Passwort. Fachliche Teilnehmer sind keine Login-Konten.
 - Sicherung und Integritätsprüfung per CLI, dokumentierte Offline-Wiederherstellung.
+
+## Auswertungen und Verlauf
+
+Ergänzung vom 12.11.2026: Personen können mehrere teamweite Abwesenheiten mit inklusivem Start-/Enddatum planen. Sie pausieren nach dem Kalender von `APP_TIMEZONE` automatisch; anschließend gilt wieder ihr unveränderter manueller Aktivstatus. Auswahlstände bleiben erhalten. Neue Zuordnungen starten beim Minimum der verfügbaren Personen. Änderungen an Abwesenheiten werden mit eigener Revision gegen Überschreiben geschützt und erhöhen die Revisionen aller betroffenen Aufgaben.
+
+Aufgaben können wöchentlich oder monatlich ab einem ersten Termin wiederkehren. Monatsdaten bleiben am ursprünglichen Kalendertag verankert, in kürzeren Monaten am letzten Tag. Jede Übernahme erledigt den aktuellen Termin und setzt die Fälligkeit auf den nächsten Ankertermin nach dem bisherigen Termin und dem heutigen Tag; verpasste Termine werden übersprungen. Eine frühe Übernahme erledigt bereits den bevorstehenden Termin. Rücknahme stellt die vorige Fälligkeit wieder her. Ändern der Wiederholung startet die Terminfolge am neu gewählten ersten Termin, Umbenennen verändert sie nicht. Fälligkeiten werden in Übersicht und Detail angezeigt; es werden keine externen Erinnerungen verschickt.
+
+Duplizieren kopiert Beschreibung, Wiederholung sowie sichtbare Teilnehmer mit ihrem manuellen Aktivstatus in eine aktive neue Aufgabe. Alle Zähler starten bei 0, Auswahlen und bisheriger Verlauf werden nicht kopiert. Die Kopie startet am ersten Termin der kopierten Wiederholung. Globale Abwesenheiten gelten auch dort. Ein frischer Anlege-/Duplikationsnachweis wird protokolliert; die Quelle bleibt unverändert.
+
+Die manuelle Übernahme ist eine bewusst gewählte Ausnahme von der Minimumregel. Genau der Stand der gewählten verfügbaren Person steigt um 1. Der Vorgang wird als manuell gekennzeichnet, in Verlauf/Protokoll gespeichert und in Stats wie jede Übernahme gezählt. Request-ID, Versionsschutz, begrenzte Rücknahme und gespeicherte Auswahl vor der Animation gelten auch hier. Die Space-Show bleibt für normale Auswahlen vollständig erhalten; manuelle Übernahmen nutzen den kurzen Einzelflug.
+
+Ergänzung vom 12.11.2026: Der Verlauf mit Auswahlhistorie und Änderungsprotokoll ist standardmäßig eingeklappt. Eine eigene Stats-Seite zeigt Übernahmen nach Personen und Aufgaben sowie gefilterte Zuordnungen. Die Auswertung nutzt sämtliche gespeicherten Auswahlen, zählt Rücknahmen nicht als Übernahmen und zeigt Auswahlstände mit Startwerten/Korrekturen separat. Archivierte Aufgaben und entfernte Personen bleiben in der historischen Auswertung enthalten und werden gekennzeichnet. Die Auswahl gilt weiterhin als Übernahme; ein gesonderter Erledigt-Status wird nicht eingeführt.
 
 ## Unterhaltsamer Chooser
 
@@ -78,4 +90,4 @@ Die Oberfläche zeigt zunächst die jüngsten 50 Auswahlen und Änderungsereigni
 
 ## Zurückgestellte Erweiterungen
 
-Alternative Glücksradanimation, zeitgesteuerte Abwesenheit, CSV-Export, Aufgaben duplizieren, manuelle Zuweisung, mehrere Gewinner gleichzeitig, individuelle Konten/Rollen und mehrere Teams. Gewichtung und Ausschluss der zuletzt gewählten Person wären eigenständige fachliche Änderungen. Vollständiger Reset ist eine optionale spätere Verwaltungsfunktion, keine Voraussetzung der ersten Version.
+Alternative Glücksradanimation, CSV-Export, mehrere Gewinner gleichzeitig, individuelle Konten/Rollen und mehrere Teams. Gewichtung und Ausschluss der zuletzt gewählten Person wären eigenständige fachliche Änderungen. Vollständiger Reset ist eine optionale spätere Verwaltungsfunktion, keine Voraussetzung der ersten Version.

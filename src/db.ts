@@ -77,6 +77,12 @@ export function migrate(db: Database): void {
     CREATE INDEX audit_by_task ON audit_events(task_id, created_at);`,
     `ALTER TABLE participants ADD COLUMN deleted_at TEXT;
     CREATE INDEX participants_by_visibility ON participants(deleted_at, name);`,
+    `ALTER TABLE participants ADD COLUMN absences_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE participants ADD COLUMN availability_version INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN schedule_json TEXT;
+    ALTER TABLE tasks ADD COLUMN next_due_date TEXT;
+    ALTER TABLE draws ADD COLUMN manual INTEGER NOT NULL DEFAULT 0 CHECK (manual IN (0, 1));
+    ALTER TABLE draws ADD COLUMN previous_due_date TEXT;`,
   ];
 
   db.transaction(() => {

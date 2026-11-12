@@ -7,6 +7,9 @@
     DrawResponse,
     Member,
     TaskDetail,
+    Stats,
+    StatsPeriod,
+    StatsDateRange,
   } from '../../src/shared/contracts';
   import type { Editor } from './lib/editor';
   import { api, errorMessage, RequestError } from './lib/api';
@@ -14,14 +17,17 @@
   import TaskList from './pages/TaskList.svelte';
   import TaskPage from './pages/TaskDetail.svelte';
   import TeamPage from './pages/TeamPage.svelte';
+  import StatsPage from './pages/StatsPage.svelte';
   import EmptyState from './components/EmptyState.svelte';
   import EditorModal from './components/EditorModal.svelte';
   import Chooser from './components/Chooser.svelte';
+  import ThemeSwitch from './components/ThemeSwitch.svelte';
 
   interface PendingDraw {
     taskId: number;
     requestId: string;
     expectedVersion: number;
+    membershipId?: number;
   }
   interface Toast {
     id: number;
@@ -37,6 +43,7 @@
   let path = $state(location.pathname);
   let appState = $state<AppState>({ tasks: [], participants: [] });
   let task = $state<TaskDetail | null>(null);
+  let stats = $state<Stats | null>(null);
   let timeZone = $state('Europe/Berlin');
   let loading = $state(true);
   let loadError = $state('');
@@ -65,19 +72,27 @@
   async function refresh(blocking = false): Promise<void> {
     const sequence = ++requestSequence;
     const currentTaskId = taskId;
+    const pageQuery = new URLSearchParams(location.search);
+    const statsQuery = new URLSearchParams();
+    for (const key of ['period', 'start', 'end']) {
+      if (pageQuery.has(key)) statsQuery.set(key, pageQuery.get(key)!);
+    }
+    const statsUrl = '/api/stats' + (statsQuery.toString() ? '?' + statsQuery.toString() : '');
     refreshing = true;
     if (blocking) {
       loading = true;
       loadError = '';
     }
     try {
-      const [nextState, nextTask] = await Promise.all([
+      const [nextState, nextTask, nextStats] = await Promise.all([
         api<AppState>('/api/state'),
         currentTaskId ? api<TaskDetail>(`/api/tasks/${currentTaskId}`) : Promise.resolve(null),
+        path === '/stats' ? api<Stats>(statsUrl) : Promise.resolve(null),
       ]);
       if (sequence !== requestSequence) return;
       appState = nextState;
       task = nextTask;
+      stats = nextStats;
       missing = false;
       loadError = '';
     } catch (error) {
@@ -105,6 +120,25 @@
     main.focus({ preventScroll: true });
   }
 
+  async function changeStatsPeriod(period: StatsPeriod, range?: StatsDateRange): Promise<void> {
+    const url = new URL(location.href);
+    if (period === 'all') url.searchParams.delete('period');
+    else url.searchParams.set('period', period);
+    if (period === 'custom' && range) {
+      url.searchParams.set('start', range.start);
+      url.searchParams.set('end', range.end);
+    } else {
+      url.searchParams.delete('start');
+      url.searchParams.delete('end');
+    }
+    history.replaceState(null, '', url);
+    await refresh(true);
+    await tick();
+    (document.querySelector<HTMLSelectElement>('[data-stats-period]') ?? main).focus({
+      preventScroll: true,
+    });
+  }
+
   async function recover(error: unknown): Promise<void> {
     notify(errorMessage(error), true);
     if (error instanceof RequestError && error.status === 409) await refresh();
@@ -127,7 +161,7 @@
     }
   }
 
-  async function draw(retry = false): Promise<void> {
+  async function draw(retry = false, membershipId?: number): Promise<void> {
     if (!task || drawing || task.archived) return;
     const sourceTask = task;
     if (!retry || pendingDraw?.taskId !== task.id) {
@@ -135,6 +169,7 @@
         taskId: task.id,
         requestId: crypto.randomUUID(),
         expectedVersion: task.version,
+        ...(membershipId === undefined ? {} : { membershipId }),
       };
     }
     const request = pendingDraw!;
@@ -152,6 +187,7 @@
       const result = await api<DrawResponse>(`/api/tasks/${sourceTask.id}/draws`, 'POST', {
         requestId: request.requestId,
         expectedVersion: request.expectedVersion,
+        ...(request.membershipId === undefined ? {} : { membershipId: request.membershipId }),
       });
       pendingDraw = null;
       task = result.task;
@@ -254,29 +290,37 @@
 </script>
 
 <svelte:head
-  ><title>{path === '/team' ? 'Team' : task ? task.name : 'Aufgaben'} · Rotator</title></svelte:head
+  ><title
+    >{path === '/stats' ? 'Stats' : path === '/team' ? 'Team' : task ? task.name : 'Aufgaben'} · Rotator</title
+  ></svelte:head
 >
 
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <header>
   <div class="header-inner">
     <a class="brand" href="/" data-route aria-label="Rotator – Aufgabenübersicht"
-      ><span class="brand-mark" aria-hidden="true"></span><span>Rotator</span></a
+      ><span>Rotator</span></a
     >
     <nav aria-label="Hauptnavigation">
       <a
         href="/"
         data-route
-        class:active={path !== '/team'}
-        aria-current={path !== '/team' ? 'page' : undefined}>Aufgaben</a
+        class:active={path !== '/team' && path !== '/stats'}
+        aria-current={path !== '/team' && path !== '/stats' ? 'page' : undefined}>Aufgaben</a
       ><a
         href="/team"
         data-route
         class:active={path === '/team'}
         aria-current={path === '/team' ? 'page' : undefined}>Team</a
       >
+      <a
+        href="/stats"
+        data-route
+        class:active={path === '/stats'}
+        aria-current={path === '/stats' ? 'page' : undefined}>Stats</a
+      >
     </nav>
-    <span class="header-note">Teamaufgaben im Wechsel.</span>
+    <div class="appearance"><ThemeSwitch /></div>
   </div>
 </header>
 
@@ -300,9 +344,17 @@
   {:else if path === '/team'}
     <TeamPage
       participants={appState.participants}
+      {timeZone}
       oncreate={() => (editor = { kind: 'person' })}
       onrename={(person) => (editor = { kind: 'person', person })}
       onremove={(person) => (editor = { kind: 'remove-person', person })}
+      onabsences={(person) => (editor = { kind: 'absences', person })}
+    />
+  {:else if path === '/stats' && stats}
+    <StatsPage
+      {stats}
+      {timeZone}
+      onperiod={(period, range) => void changeStatsPeriod(period, range)}
     />
   {:else if task}
     {#key task.id}
@@ -325,9 +377,6 @@
   {/if}
 </main>
 
-<footer>
-  <span>Aufgaben im Team. Nachvollziehbar verteilt.</span><span>Rotator</span>
-</footer>
 <div class="toasts" role="status" aria-live="polite" aria-atomic="true">
   {#each toasts as toast (toast.id)}<div class="toast" class:error={toast.error}>
       {toast.message}
@@ -337,6 +386,11 @@
 {#if editor}<EditorModal
     {editor}
     participants={appState.participants}
+    {timeZone}
+    onmanual={(membershipId) => {
+      editor = null;
+      void draw(false, membershipId);
+    }}
     onsaved={saved}
     onclose={() => (editor = null)}
     onconflict={async (message) => {
@@ -359,8 +413,7 @@
     top: -70px;
     left: 20px;
     padding: 12px 18px;
-    border-radius: var(--radius);
-    background: var(--petal);
+    background: var(--surface);
     color: var(--ink);
   }
   .skip-link:focus {
@@ -370,94 +423,54 @@
     clip-path: inset(50%);
   }
   header {
-    height: 88px;
-    border-bottom: 1px solid var(--dark-line);
+    height: 68px;
+    border-bottom: 1px solid var(--line);
   }
   .header-inner {
     display: flex;
-    max-width: 1340px;
+    max-width: var(--page-max);
     height: 100%;
     align-items: center;
-    gap: 66px;
+    gap: 48px;
     margin: auto;
-    padding: 0 45px;
+    padding: 0 32px;
   }
   .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 19px;
-    color: var(--on-dark);
-    font: 700 25px var(--font-display);
-    letter-spacing: 0.17em;
+    color: var(--ink);
+    font: 700 18px var(--font-display);
+    letter-spacing: -0.04em;
   }
-  .brand-mark {
-    position: relative;
-    display: block;
-    width: 30px;
-    height: 30px;
+  .brand:hover {
+    color: var(--accent-text);
+  }
+  .appearance {
+    margin-left: auto;
     flex: none;
-    border: 1px solid var(--petal);
-    border-radius: 50%;
-  }
-  .brand-mark::before {
-    content: '';
-    position: absolute;
-    inset: 8px -10px;
-    border: 1px solid var(--petal);
-    border-radius: 50%;
-    transform: rotate(-28deg);
-  }
-  .brand-mark::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    right: 1px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--lilac);
   }
   nav {
     display: flex;
     height: 100%;
     align-items: stretch;
-    gap: 32px;
-    font-size: 14px;
+    gap: 28px;
+    font-size: 13px;
   }
   nav a {
     display: flex;
     align-items: center;
     border-bottom: 2px solid transparent;
-    color: var(--on-dark-muted);
+    color: var(--muted);
   }
   nav a:hover {
-    color: var(--on-dark);
+    color: var(--ink);
   }
   nav a.active {
-    border-bottom-color: var(--petal);
-    color: var(--on-dark);
-  }
-  .header-note {
-    margin-left: auto;
-    color: var(--on-dark-muted);
-    font-size: 12px;
+    border-bottom-color: var(--primary);
+    color: var(--ink);
   }
   main {
-    max-width: 1340px;
-    min-height: calc(100vh - 167px);
+    max-width: var(--page-max);
     margin: auto;
-    padding: 49px 45px 64px;
-  }
-  footer {
-    display: flex;
-    max-width: 1250px;
-    justify-content: space-between;
-    gap: 20px;
-    margin: auto;
-    padding: 24px 0;
-    border-top: 1px solid var(--dark-line);
-    color: var(--on-dark-muted);
-    font-size: 12px;
+    padding: 42px 32px 64px;
   }
   .toasts {
     position: fixed;
@@ -471,7 +484,7 @@
   }
   .toast {
     padding: 15px 20px;
-    border: 1px solid var(--primary);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--ink);
@@ -479,79 +492,29 @@
     font-size: 14px;
   }
   .toast.error {
-    border-color: var(--lilac);
+    border-color: var(--danger);
     background: var(--danger-tint);
     color: var(--danger);
   }
-  @media (max-width: 850px) {
-    .header-inner {
-      padding-inline: 25px;
-      gap: 42px;
-    }
-    main {
-      padding-inline: 25px;
-    }
-    footer {
-      margin-inline: 25px;
-    }
-    .header-note {
-      display: none;
-    }
-  }
   @media (max-width: 600px) {
-    header {
-      height: 74px;
-    }
     .header-inner {
-      padding-inline: 19px;
-      gap: 32px;
-    }
-    .brand {
-      gap: 13px;
-      font-size: 22px;
-    }
-    .brand-mark {
-      width: 24px;
-      height: 24px;
-    }
-    .brand-mark::before {
-      inset: 6px -8px;
+      padding-inline: 12px;
+      gap: 10px;
     }
     nav {
-      gap: 22px;
-      font-size: 13px;
+      gap: 12px;
+      font-size: 12px;
+    }
+    .brand {
+      font-size: 16px;
     }
     main {
-      padding: 32px 19px 45px;
-    }
-    footer {
-      margin-inline: 19px;
-      flex-direction: column;
-      gap: 8px;
+      padding: 28px 20px 40px;
     }
     .toasts {
       right: 16px;
       bottom: 16px;
       max-width: calc(100% - 32px);
-    }
-  }
-  @media (max-width: 380px) {
-    .header-inner {
-      padding-inline: 16px;
-      gap: 20px;
-    }
-    .brand {
-      gap: 11px;
-      font-size: 20px;
-      letter-spacing: 0.12em;
-    }
-    .brand-mark {
-      width: 22px;
-      height: 22px;
-    }
-    nav {
-      gap: 16px;
-      font-size: 12px;
     }
   }
 </style>

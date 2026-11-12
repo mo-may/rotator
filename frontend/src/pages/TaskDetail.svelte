@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { Draw, Member, TaskDetail } from '../../../src/shared/contracts';
   import type { Editor } from '../lib/editor';
-  import { formatDate } from '../lib/format';
-  import Avatar from '../components/Avatar.svelte';
+  import { formatDate, formatDay } from '../lib/format';
   import MemberTable from '../components/MemberTable.svelte';
   import History from '../components/History.svelte';
 
@@ -34,7 +33,10 @@
 
   const currentInactive = $derived(
     task.currentDraw &&
-      task.members.some((member) => member.id === task.currentDraw!.membershipId && !member.active),
+      task.members.some(
+        (member) =>
+          member.id === task.currentDraw!.membershipId && (!member.active || member.absent),
+      ),
   );
   const probability = $derived(
     new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
@@ -49,11 +51,19 @@
 <div class="page-heading">
   <div>
     <h1>{task.name}</h1>
-    <p class="page-description">
-      {task.description || 'Teilnehmer verwalten und die nächste Person bestimmen.'}
-    </p>
+    {#if task.description}<p class="page-description">{task.description}</p>{/if}
+    {#if task.schedule}<p class="page-description">
+        {task.schedule.frequency === 'weekly' ? 'Wöchentlich' : 'Monatlich'}{task.dueDate
+          ? ` · ${task.due ? 'Fällig' : 'Nächster Termin'} am ${formatDay(task.dueDate)}`
+          : ' · Keine weiteren Termine'}
+      </p>{/if}
   </div>
   <div class="heading-actions">
+    <button
+      class="button quiet"
+      disabled={busy || pending}
+      onclick={() => onedit({ kind: 'duplicate', task })}>Duplizieren</button
+    >
     <button class="button secondary" disabled={busy} onclick={() => onedit({ kind: 'task', task })}
       >Aufgabe bearbeiten</button
     >
@@ -73,25 +83,27 @@
 <div class="workspace">
   <div>
     <section class="winner-panel" aria-label="Auswahl für diese Aufgabe">
-      <div class="winner-top">
-        <p class="eyebrow">Aktuell dran</p>
+      <section
+        class="winner-top"
+        class:has-winner={task.currentDraw !== null}
+        aria-label="Aktuell ausgewählte Person"
+      >
+        <p class="eyebrow">Aktuell ausgewählt</p>
         {#if task.currentDraw}
           <div class="winner-content">
-            <Avatar name={task.currentDraw.name} large />
             <div>
               <p class="winner-name" data-testid="current-winner">{task.currentDraw.name}</p>
               <p class="winner-meta">
                 Ausgewählt am {formatDate(task.currentDraw.createdAt, timeZone)}{currentInactive
-                  ? ' · derzeit inaktiv'
+                  ? ' · derzeit inaktiv oder abwesend'
                   : ''}
               </p>
             </div>
           </div>
         {:else}
           <p class="winner-empty">Noch niemand ausgewählt.</p>
-          <p class="winner-meta">Starte die erste Auswahl, sobald Teilnehmer zugeordnet sind.</p>
         {/if}
-      </div>
+      </section>
       <div class="winner-body">
         {#if !task.members.length}
           <p>
@@ -100,25 +112,25 @@
           </p>
         {:else if !task.candidates.length}
           <p>
-            Alle Teilnehmer sind inaktiv. Aktiviere mindestens eine Person für die nächste Auswahl.
+            Niemand ist derzeit verfügbar. Prüfe Aktivstatus und geplante Abwesenheiten im Team.
           </p>
         {:else}
-          <p>
-            <strong
-              >{task.candidates.length === 1
-                ? '1 Person hat'
-                : `${task.candidates.length} Personen haben`} den niedrigsten Auswahlstand: {task
-                .candidates[0]!.count}.</strong
-            >
-            {task.candidates.length === 1
-              ? 'Die nächste Auswahl steht fest.'
-              : 'Zwischen ihnen entscheidet das Los.'}
+          <p class="candidate-summary">
+            Im Lostopf: <span>{task.candidates.map((member) => member.name).join(', ')}</span>
           </p>
-          <div class="candidate-chips">
-            {#each task.candidates as member (member.id)}<span
-                >{member.name}<small>{probability} %</small></span
-              >{/each}
-          </div>
+          <details class="selection-rule">
+            <summary>Wie wird ausgewählt?</summary>
+            <p>
+              Aktive Personen mit dem niedrigsten Auswahlstand ({task.candidates[0]!.count}) sind im
+              Lostopf. {task.candidates.length === 1
+                ? 'Die nächste Auswahl steht fest.'
+                : 'Bei Gleichstand entscheidet das Los.'} Wer ausgewählt wird, erhält einen Punkt.
+            </p>
+            <p>
+              {task.candidates.length}
+              {task.candidates.length === 1 ? 'Person' : 'Personen'} · jeweils {probability} % Chance
+            </p>
+          </details>
         {/if}
         <button
           class="button primary draw-button"
@@ -129,30 +141,39 @@
             aria-hidden="true">→</span
           ></button
         >
-        <div class="chooser-settings">
-          <label
-            >Tempo <select
-              value={quick ? 'quick' : 'show'}
-              onchange={(event) => {
-                quick = event.currentTarget.value === 'quick';
-                onpreferences(quick, sound);
-              }}
-              ><option value="show">Show · 6 Sekunden</option><option value="quick"
-                >Schnell · 1 Sekunde</option
-              ></select
-            ></label
-          >
-          <label
-            ><input
-              type="checkbox"
-              checked={sound}
-              onchange={(event) => {
-                sound = event.currentTarget.checked;
-                onpreferences(quick, sound);
-              }}
-            /> Sound</label
-          >
-        </div>
+        <button
+          class="button quiet manual-button"
+          disabled={busy || task.archived || !task.activeCount || pending}
+          onclick={() => onedit({ kind: 'manual', task })}>Manuell übernehmen</button
+        >
+        <details class="animation-options">
+          <summary>Animationsoptionen</summary>
+          <div class="chooser-settings">
+            <label
+              >Tempo <select
+                aria-label="Tempo"
+                value={quick ? 'quick' : 'show'}
+                onchange={(event) => {
+                  quick = event.currentTarget.value === 'quick';
+                  onpreferences(quick, sound);
+                }}
+                ><option value="show">Show · 12 Sekunden</option><option value="quick"
+                  >Schnell · 1 Sekunde</option
+                ></select
+              ></label
+            >
+            <label
+              ><input
+                type="checkbox"
+                checked={sound}
+                onchange={(event) => {
+                  sound = event.currentTarget.checked;
+                  onpreferences(quick, sound);
+                }}
+              /> Sound</label
+            >
+          </div>
+        </details>
         {#if pending}<div class="notice error pending">
             <p>
               Die Antwort ist nicht angekommen. Prüfe dieselbe Auswahl erneut – es wird nicht
@@ -179,159 +200,101 @@
       onundo={(draw: Draw) => onedit({ kind: 'undo', task, draw })}
     />
   </div>
-  <aside>
-    <div class="fairness-card">
-      <p class="eyebrow">Auswahlregel</p>
-      <h2>Der niedrigste Stand zählt.</h2>
-      <p>Aktive Personen mit gleichem Mindeststand haben dieselbe Chance.</p>
-      <ol>
-        <li>Aktive Personen mit dem niedrigsten Auswahlstand sind dran.</li>
-        <li>Bei Gleichstand entscheidet der Zufall. Alle haben dieselbe Chance.</li>
-        <li>Wer gewählt wird, bekommt einen Punkt dazu.</li>
-      </ol>
-    </div>
-    <dl>
-      <div>
-        <dt>Teilnehmer</dt>
-        <dd>{task.memberCount}</dd>
-      </div>
-      <div>
-        <dt>Davon aktiv</dt>
-        <dd>{task.activeCount}</dd>
-      </div>
-    </dl>
-  </aside>
 </div>
 
 <style>
   .breadcrumbs {
-    --muted: var(--on-dark-muted);
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    margin-bottom: 24px;
+    margin-bottom: 22px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
   }
   .breadcrumbs a:hover {
-    color: var(--primary);
-  }
-  .workspace {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
-    gap: 25px;
-    align-items: start;
+    color: var(--accent-text);
+    text-decoration: underline;
   }
   .winner-panel {
-    color: var(--ink);
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--surface);
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 32px;
+    padding: 28px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
   .winner-top {
-    color: var(--on-dark);
-    position: relative;
-    min-height: 190px;
-    padding: 27px 29px;
-    background: var(--charcoal);
+    min-width: 0;
+    padding: 24px;
+    border-left: 3px solid var(--line);
+    border-radius: var(--radius);
   }
-  .winner-top::after {
-    content: '';
-    position: absolute;
-    top: -55px;
-    right: -55px;
-    width: 240px;
-    height: 240px;
-    border: 1px solid color-mix(in srgb, var(--petal) 35%, transparent);
-    border-radius: 50%;
-    pointer-events: none;
+  .winner-top.has-winner {
+    border-left-color: var(--primary);
+    background: var(--tint);
+  }
+  .winner-top .eyebrow {
+    color: var(--accent-text);
+    text-transform: none;
+    letter-spacing: 0;
   }
   .winner-content {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-top: 23px;
+    margin-top: 12px;
   }
   .winner-name {
-    font-size: 33px;
-    font-weight: 800;
-    letter-spacing: -0.04em;
+    font-size: clamp(32px, 4vw, 52px);
+    font-weight: 700;
     line-height: 1.15;
     overflow-wrap: anywhere;
   }
   .winner-meta {
-    position: relative;
-    z-index: 1;
-    margin-top: 9px;
-    color: var(--on-dark);
-    font-size: 13px;
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
   }
   .winner-empty {
-    position: relative;
-    z-index: 1;
-    margin-top: 24px;
-    font-size: 30px;
-    font-weight: 750;
-    letter-spacing: -0.04em;
+    margin-top: 12px;
+    font-size: 18px;
   }
   .winner-body {
-    padding: 25px 29px;
+    min-width: 0;
   }
   .winner-body > p {
     color: var(--muted);
-    font-size: 15px;
+    font-size: 13px;
   }
-  .winner-body strong {
+  .candidate-summary span {
     color: var(--ink);
-  }
-  .candidate-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 17px 0 22px;
-  }
-  .candidate-chips span {
-    color: var(--ink);
-    display: flex;
-    gap: 10px;
-    padding: 6px 10px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--warning-tint);
-    font-size: 14px;
     overflow-wrap: anywhere;
   }
-  .candidate-chips small {
+  .selection-rule,
+  .animation-options {
+    margin-top: 12px;
     color: var(--muted);
     font-size: 12px;
-    white-space: nowrap;
+  }
+  .selection-rule p {
+    margin-top: 10px;
   }
   .draw-button {
-    width: 100%;
-    min-height: 59px;
-    justify-content: flex-start;
-    margin-top: 17px;
-    font-size: 16px;
-  }
-  .draw-button > span:first-child {
-    margin-right: 5px;
-    font-size: 26px;
-    line-height: 1;
+    margin-top: 20px;
+    min-height: 48px;
+    max-width: 100%;
   }
   .arrow {
-    margin-left: auto;
+    margin-left: 8px;
+  }
+  .manual-button {
+    margin-top: 8px;
   }
   .chooser-settings {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 14px;
-    margin-top: 17px;
-    color: var(--muted);
-    font-size: 13px;
+    align-items: center;
+    gap: 16px;
+    margin-top: 14px;
   }
   .chooser-settings label {
     display: flex;
@@ -340,101 +303,24 @@
   }
   .chooser-settings select {
     max-width: 190px;
-    padding: 5px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--ink);
-    font-size: 13px;
-  }
-  .chooser-settings input {
-    accent-color: var(--primary);
-  }
-  .pending {
-    margin-top: 20px;
-    margin-bottom: 0;
-  }
-  .fairness-card {
-    color: var(--ink);
-    padding: 25px;
-    border: 1px solid var(--line);
+    padding: 7px;
+    border: 1px solid var(--control-line);
     border-radius: var(--radius);
     background: var(--surface);
+    color: var(--ink);
+    font-size: 12px;
   }
-
-  .fairness-card h2 {
-    margin-bottom: 13px;
-    font-size: 25px;
+  .pending {
+    margin: 20px 0 0;
   }
-  .fairness-card p {
-    color: var(--muted);
-    font-size: 14px;
-  }
-  ol {
-    margin: 22px 0 0;
-    padding-left: 20px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-  li {
-    padding: 13px 0 0 5px;
-  }
-  li::marker {
-    color: var(--primary-hover);
-    font-weight: 750;
-  }
-  dl {
-    --muted: var(--on-dark-muted);
-    margin: 24px 6px 0;
-    font-size: 13px;
-  }
-  dl div {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    margin: 12px 0;
-  }
-  dt {
-    color: var(--muted);
-  }
-  dd {
-    margin: 0;
-    font-weight: 650;
-  }
-  @media (max-width: 1100px) {
-    .workspace {
-      grid-template-columns: minmax(0, 1fr) 250px;
-      gap: 20px;
-    }
-    .fairness-card {
-      padding: 20px;
-    }
-  }
-  @media (max-width: 920px) {
-    .workspace {
+  @media (max-width: 650px) {
+    .winner-panel {
       grid-template-columns: minmax(0, 1fr);
-    }
-    aside {
-      display: none;
-    }
-  }
-  @media (max-width: 600px) {
-    .winner-top,
-    .winner-body {
-      padding: 22px;
-    }
-    .winner-name {
-      font-size: 28px;
-    }
-    .winner-empty {
-      font-size: 27px;
+      gap: 24px;
+      padding: 24px 0;
     }
     .draw-button {
-      font-size: 15px;
-    }
-    .winner-top::after {
-      font-size: 115px;
-      top: 25px;
+      width: 100%;
     }
   }
 </style>

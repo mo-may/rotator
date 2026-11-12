@@ -19,15 +19,14 @@
   .empty-state {
     color: var(--ink);
     padding: 48px 24px;
-    border: 1px dashed var(--line);
-    border-radius: var(--radius);
+    border-top: 1px solid var(--line);
     background: var(--surface);
     text-align: center;
   }
 
   h2 {
     margin: 22px 0 12px;
-    font-size: 28px;
+    font-size: 20px;
   }
   p {
     max-width: 470px;

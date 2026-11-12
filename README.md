@@ -9,6 +9,10 @@ Farben und Typografie sind in [DESIGN.md](DESIGN.md) dokumentiert. Die aktuelle 
 ## Features
 
 - Aufgaben anlegen, bearbeiten, archivieren und wieder öffnen.
+- Aufgaben mit Beschreibung und Teilnehmern duplizieren; die Kopie startet ohne Auswahlen und mit Auswahlständen 0.
+- Wöchentliche oder monatliche Fälligkeiten mit erstem Termin; jede Übernahme setzt die Terminfolge fort, eine Rücknahme stellt den vorherigen Termin wieder her.
+- Mehrere teamweite Abwesenheiten pro Person planen; automatische Pause und Rückkehr ohne Änderung der Auswahlstände.
+- Verfügbare Personen bewusst manuell übernehmen lassen, mit Zählererhöhung, Kennzeichnung im Verlauf, Rücknahme und Berücksichtigung in Stats.
 - Personen zentral verwalten und mehreren Aufgaben zuordnen.
 - Personen nach Bestätigung aus dem Team und sämtlichen Aufgaben entfernen; die Historie bleibt erhalten.
 - Aktivstatus und Auswahlstand unabhängig pro Aufgabe verwalten.
@@ -24,11 +28,13 @@ Farben und Typografie sind in [DESIGN.md](DESIGN.md) dokumentiert. Die aktuelle 
 
 ## Auswahlregeln
 
-1. Für die gewählte Aufgabe werden alle aktiven Zuordnungen gelesen.
+1. Für die gewählte Aufgabe werden alle aktiven, derzeit nicht abwesenden Zuordnungen gelesen.
 2. Nur Personen mit dem kleinsten aktiven Auswahlstand kommen in den Lostopf.
 3. Ein einzelner Kandidat wird direkt gewählt. Bei mehreren Kandidaten entscheidet eine gleichverteilte Zufallsauswahl auf dem Server.
 4. Der Stand des Gewinners steigt um genau 1. Ergebnis, Historie und aktueller Gewinner werden gemeinsam gespeichert.
 5. Erst danach präsentiert der Browser das gespeicherte Ergebnis.
+
+„Manuell übernehmen“ wählt ausdrücklich eine verfügbare Person unabhängig vom Minimum; es gelten derselbe Schreibschutz und dieselbe Rücknahmeregel. Die kurze Auswahl-Animation zeigt die gespeicherte Übernahme. Abwesenheiten stehen unter **Team → Abwesenheiten**, die Wiederholung unter **Aufgabe anlegen/bearbeiten**, Duplizieren und manuelle Übernahme auf der Aufgabenseite. Daten ohne Wiederholung bleiben ohne Termin. Start-/Endtage von Abwesenheiten zählen vollständig in `APP_TIMEZONE`; manuell inaktive Zuordnungen bleiben auch danach inaktiv. Fällige Aufgaben erhalten einen dezenten Texthinweis. Eine frühe Übernahme erledigt bereits den nächsten Termin; verpasste Wiederholungen werden übersprungen. Monatsanker kehren nach kürzeren Monaten zum ursprünglichen Kalendertag zurück.
 
 | Fall                                          | Verhalten                                                                              |
 | --------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -82,6 +88,16 @@ Projektordner, Compose-Projekt, Service, Image und Container heißen `rotator`. 
 Der Compose-Datenträger `chooser-data` verwendet ausdrücklich den bestehenden Docker-Volume-Namen `chooser_chooser-data` und enthält die Datenbank unter `/data/chooser.sqlite3`. Dadurch bleibt der vorhandene Datenbestand auch nach der Umbenennung verfügbar. Ein normaler Containerneustart oder Neuaufbau erhält die Daten. `docker compose down -v` entfernt dagegen das Volume und damit den Datenbestand.
 
 ## Bedienung
+
+Unter **Stats** zeigt Rotator Übernahmen nach Personen und Aufgaben. „Details ansehen“ öffnet die Zuordnungen mit Filtern für Person und Aufgabe. Ansicht und Filter bleiben beim Neuladen erhalten und können über die URL geteilt werden. Die Auswertung umfasst die gesamte gespeicherte Historie einschließlich archivierter Aufgaben und entfernter Personen. Rückgenommene Auswahlen werden separat ausgewiesen und zählen nicht als Übernahmen. Der Auswahlstand enthält zusätzlich Startwerte und Korrekturen und wird deshalb separat dargestellt.
+
+Auf der Aufgabenseite ist **Auswahlverlauf & Änderungsprotokoll** standardmäßig eingeklappt. Zum Lesen des Verlaufs oder Zurücknehmen der letzten Auswahl diesen Bereich zuerst öffnen.
+
+Der Stats-Filter **Zeitraum** bietet „Insgesamt“, „Letzte Woche“ (letzte sieben Tage) und „Letzter Monat“ (rollierend bis zum entsprechenden Datum des Vormonats). Das genaue Zeitfenster steht unter dem Filter und bleibt beim Neuladen erhalten. Übernahmen, Rücknahmen und letzte Übernahme beziehen sich auf dieses Fenster; der ausdrücklich als aktuell beschriftete Auswahlstand bleibt der heutige Zähler.
+
+Eingabedialoge fokussieren beim Öffnen das erste nutzbare Eingabefeld, damit direkt getippt werden kann. Bestätigungen ohne Eingabefeld starten bei „Abbrechen“.
+
+Für einen eigenen Stats-Zeitraum **Benutzerdefiniert** wählen, **Startdatum** und **Enddatum** eingeben und **Anwenden** drücken. Der gesamte Endtag zählt in der Zeitzone der Anwendung mit. Erst „Anwenden“ ändert die Auswertung; der übernommene Bereich bleibt mit den anderen Filtern in der URL gespeichert.
 
 ### Aufgaben und Teilnehmer vorbereiten
 

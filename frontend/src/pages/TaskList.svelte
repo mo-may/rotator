@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { AppState } from '../../../src/shared/contracts';
-  import Avatar from '../components/Avatar.svelte';
+  import type { AppState, TaskSummary } from '../../../src/shared/contracts';
+  import DataList from '../components/DataList.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import { formatDay } from '../lib/format';
 
   let { appState, oncreate }: { appState: AppState; oncreate: () => void } = $props();
   let showArchived = $state(false);
@@ -9,57 +10,44 @@
   const visibleTasks = $derived(appState.tasks.filter((task) => showArchived || !task.archived));
 </script>
 
-<section class="overview-heading">
+<div class="page-heading">
   <div>
-    <p class="eyebrow">Teamaufgaben</p>
-    <h1>Wer übernimmt?</h1>
-    <p class="intro">Aufgaben verwalten. Die nächste Person fair bestimmen.</p>
+    <h1>Aufgaben <span class="heading-count">{activeTasks.length}</span></h1>
+    <p class="page-description">Wer übernimmt als Nächstes?</p>
   </div>
-  <dl class="summary">
-    <div>
-      <dt>Aktive Aufgaben</dt>
-      <dd>{activeTasks.length}</dd>
-    </div>
-    <div>
-      <dt>Personen im Team</dt>
-      <dd>{appState.participants.length}</dd>
-    </div>
-  </dl>
-</section>
+  <button class="button primary" onclick={oncreate}>+ Neue Aufgabe</button>
+</div>
 
-<div class="section-heading">
-  <h2>Eure Aufgaben <span class="count-chip">{activeTasks.length}</span></h2>
-  <div class="list-actions">
-    <label><input type="checkbox" bind:checked={showArchived} /> Archivierte anzeigen</label>
-    <button class="button primary" onclick={oncreate}>+ Neue Aufgabe</button>
-  </div>
+<div class="list-toolbar">
+  <label><input type="checkbox" bind:checked={showArchived} /> Archivierte anzeigen</label>
+  <a href="/team" data-route>{appState.participants.length} Personen im Team →</a>
 </div>
 
 {#if visibleTasks.length}
-  <div class="task-grid">
-    {#each visibleTasks as task (task.id)}
-      <article class:archived={task.archived}>
-        <div class="card-top">
-          <h3><a href="/tasks/{task.id}" data-route>{task.name}</a></h3>
-          <span class="badge" class:neutral={task.archived}
-            >{task.archived ? 'Archiviert' : 'Aktiv'}</span
-          >
-        </div>
-        {#if task.description}<p class="task-description">{task.description}</p>{/if}
-        <div class="current">
-          <Avatar name={task.currentDraw?.name || '—'} />
-          <div>
-            <p class="caption">Aktuell dran</p>
-            <p class="current-name">{task.currentDraw?.name || 'Noch niemand ausgewählt'}</p>
-          </div>
-        </div>
-        <div class="card-bottom">
-          <span>{task.activeCount} von {task.memberCount} aktiv</span>
-          <a href="/tasks/{task.id}" data-route>Aufgabe öffnen →</a>
-        </div>
-      </article>
-    {/each}
-  </div>
+  {#snippet taskName(task: TaskSummary)}
+    <h2 class="list-title">{task.name} <span class="row-arrow" aria-hidden="true">→</span></h2>
+    {#if task.archived}<p class="list-description">Archiviert</p>{/if}
+    {#if task.description}<p class="list-description">{task.description}</p>{/if}
+    {#if task.dueDate}<p class:list-note={task.due} class:list-description={!task.due}>
+        {task.due ? 'Fällig' : 'Nächster Termin'} · {formatDay(task.dueDate)}
+      </p>{/if}
+  {/snippet}
+  {#snippet currentPerson(task: TaskSummary)}
+    <span class:unassigned={!task.currentDraw}>{task.currentDraw?.name || 'Noch niemand'}</span>
+  {/snippet}
+  {#snippet members(task: TaskSummary)}
+    <span class="members">{task.activeCount} von {task.memberCount} verfügbar</span>
+  {/snippet}
+  <DataList
+    label="Aufgaben"
+    items={visibleTasks}
+    columns={[
+      { label: 'Aufgabe', content: taskName },
+      { label: 'Aktuell dran', content: currentPerson },
+      { label: 'Teilnehmer', content: members },
+    ]}
+    href={(task) => '/tasks/' + task.id}
+  />
 {:else}
   <EmptyState
     title={showArchived ? 'Keine Aufgaben vorhanden.' : 'Noch keine aktiven Aufgaben.'}
@@ -70,178 +58,32 @@
 {/if}
 
 <style>
-  .overview-heading {
+  .list-toolbar {
     display: flex;
-    align-items: flex-end;
+    flex-wrap: wrap;
+    align-items: center;
     justify-content: space-between;
-    gap: 40px;
-    padding: 0 0 36px;
-    border-bottom: 1px solid var(--dark-line);
+    gap: 12px;
+    margin-bottom: 20px;
+    color: var(--muted);
+    font-size: 12px;
   }
-  .eyebrow {
-    color: var(--on-dark-muted);
-  }
-  h1 {
-    margin: 15px 0 12px;
-    font-size: clamp(40px, 4.5vw, 58px);
-    font-weight: 600;
-    letter-spacing: -0.04em;
-  }
-  .intro {
-    color: var(--on-dark-muted);
-    font-size: 16px;
-  }
-  .summary {
-    display: flex;
-    flex: none;
-    gap: 35px;
-    margin: 0 0 4px;
-  }
-  .summary div {
-    padding-left: 24px;
-    border-left: 1px solid var(--dark-line);
-  }
-  .summary dt {
-    color: var(--on-dark-muted);
-    font-size: 13px;
-  }
-  .summary dd {
-    margin: 5px 0 0;
-    color: var(--petal);
-    font: 26px var(--font-mono);
-  }
-  .list-actions {
+  label {
     display: flex;
     align-items: center;
-    gap: 22px;
+    gap: 8px;
   }
-  .list-actions label {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--on-dark-muted);
-    font-size: 13px;
-  }
-  input {
-    accent-color: var(--petal);
-  }
-  .task-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 20px;
-  }
-  article {
-    display: flex;
-    min-height: 258px;
-    flex-direction: column;
-    padding: 24px;
-    border: 1px solid var(--line);
-    border-top: 3px solid var(--lavender);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--ink);
-  }
-  article.archived {
-    border-top-color: var(--control-line);
-    background: var(--surface-muted);
-  }
-  .card-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-  }
-  h3 {
-    font-size: 24px;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-  }
-  h3 a:hover,
-  .card-bottom a:hover {
-    color: var(--primary);
+  .list-toolbar a:hover {
+    color: var(--accent-text);
     text-decoration: underline;
-    text-underline-offset: 4px;
   }
-  .task-description {
-    display: -webkit-box;
-    margin-top: 12px;
-    overflow: hidden;
+  .unassigned,
+  .members {
     color: var(--muted);
-    font-size: 14px;
-    line-clamp: 2;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    font-size: 12px;
   }
-  .current {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: auto;
-    padding: 24px 0;
-  }
-  .current-name {
-    font-size: 16px;
-    font-weight: 650;
-    overflow-wrap: anywhere;
-  }
-  .card-bottom {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding-top: 17px;
-    border-top: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .card-bottom a {
-    color: var(--primary-hover);
-    font-weight: 650;
-  }
-  @media (max-width: 1050px) {
-    .task-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .summary {
-      gap: 22px;
-    }
-    .summary div {
-      padding-left: 18px;
-    }
-  }
-  @media (max-width: 750px) {
-    .overview-heading {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 25px;
-    }
-    .summary {
-      gap: 32px;
-    }
-    .summary div {
-      padding-left: 0;
-      border: 0;
-    }
-    .summary dd {
-      font-size: 22px;
-    }
-    .list-actions {
-      align-items: flex-end;
-      flex-direction: column-reverse;
-      gap: 10px;
-    }
-  }
-  @media (max-width: 600px) {
-    .task-grid {
-      grid-template-columns: 1fr;
-    }
-    .list-actions .button {
-      font-size: 13px;
-    }
-    .card-top {
-      gap: 12px;
-    }
-    h1 {
-      font-size: 40px;
-    }
+  .row-arrow {
+    margin-left: 8px;
+    color: var(--accent-text);
   }
 </style>

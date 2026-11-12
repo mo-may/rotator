@@ -8,6 +8,7 @@
     description,
     submitLabel,
     danger = false,
+    applicationValidation = false,
     children,
     onsubmit,
     onclose,
@@ -16,6 +17,7 @@
     description: string;
     submitLabel: string;
     danger?: boolean;
+    applicationValidation?: boolean;
     children: Snippet;
     onsubmit: () => Promise<void>;
     onclose: () => void;
@@ -31,7 +33,17 @@
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog.showModal();
-    if (danger) cancelButton.focus();
+    const visible = (field: HTMLElement) =>
+      field.getClientRects().length > 0 && getComputedStyle(field).visibility === 'visible';
+    const firstInput = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'form input:not([type="hidden"]):not(:disabled):not([readonly]), form textarea:not(:disabled):not([readonly])',
+      ),
+    ).find(visible);
+    const firstSelect = Array.from(
+      dialog.querySelectorAll<HTMLSelectElement>('form select:not(:disabled)'),
+    ).find(visible);
+    (firstInput ?? firstSelect ?? cancelButton).focus();
     return () => {
       dialog.close();
       const focusTarget =
@@ -73,7 +85,7 @@
     <button class="close" aria-label="Dialog schließen" disabled={busy} onclick={onclose}>×</button>
   </div>
   <p id="{titleId}-description" class="description">{description}</p>
-  <form onsubmit={submit}>
+  <form onsubmit={submit} novalidate={applicationValidation}>
     {#if error}<div class="notice error" role="alert">{error}</div>{/if}
     <fieldset disabled={busy}>
       {@render children()}

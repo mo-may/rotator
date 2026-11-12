@@ -3,6 +3,11 @@
   import type { Editor } from '../lib/editor';
   import { api, RequestError } from '../lib/api';
   import FormModal from './FormModal.svelte';
+  import DataList from './DataList.svelte';
+  import type { Absence, TaskSchedule } from '../../../src/shared/contracts';
+  import { calendarDate } from '../../../src/shared/scheduling';
+  import { isStatsDateRange } from '../../../src/shared/stats-range';
+  import { formatDay } from '../lib/format';
 
   let {
     editor,
@@ -10,12 +15,16 @@
     onsaved,
     onclose,
     onconflict,
+    onmanual,
+    timeZone,
   }: {
     editor: Editor;
     participants: Participant[];
     onsaved: (message: string, path?: string) => Promise<void>;
     onclose: () => void;
     onconflict: (message: string) => Promise<void>;
+    onmanual: (membershipId: number) => void;
+    timeZone: string;
   } = $props();
 
   let name = $state('');
@@ -26,6 +35,14 @@
   let newPersonName = $state('');
   let selectedParticipantIds = $state<number[]>([]);
   let createdParticipant = $state<Participant | null>(null);
+  let frequency = $state<'none' | 'weekly' | 'monthly'>('none');
+  let startDate = $state('');
+  let absences = $state<Absence[]>([]);
+  let absenceStart = $state('');
+  let absenceEnd = $state('');
+  let absenceError = $state('');
+  let absenceInput = $state<HTMLInputElement>();
+  const absenceRows = $derived(absences.map((range) => ({ ...range, id: range.start })));
   const fieldId = $props.id();
 
   $effect(() => {
@@ -33,9 +50,36 @@
       name = editor.task?.name || '';
       description = editor.task?.description || '';
       selectedParticipantIds = [];
+      frequency = editor.task?.schedule?.frequency ?? 'none';
+      startDate =
+        editor.task?.schedule?.startDate ?? calendarDate(new Date().toISOString(), timeZone);
+    } else if (editor.kind === 'duplicate') {
+      name = `${editor.task.name.slice(0, 92)} (Kopie)`;
+    } else if (editor.kind === 'absences') {
+      absences = (editor.person.absences ?? []).map((range) => ({ ...range }));
     } else if (editor.kind === 'person') name = editor.person?.name || '';
     else if (editor.kind === 'correction') count = editor.member.count;
   });
+
+  function addAbsence(): boolean {
+    absenceError = '';
+    const range = { start: absenceStart, end: absenceEnd };
+    if (!isStatsDateRange(range))
+      absenceError =
+        'Bitte gib gültige Daten an. Das Enddatum darf nicht vor dem Startdatum liegen.';
+    else if (absences.some((saved) => saved.start <= range.end && range.start <= saved.end))
+      absenceError = 'Dieser Zeitraum überschneidet sich mit einer bestehenden Abwesenheit.';
+    else if (absences.length >= 100)
+      absenceError = 'Es können höchstens 100 Abwesenheiten gespeichert werden.';
+    if (absenceError) {
+      absenceInput?.focus();
+      return false;
+    }
+    absences = [...absences, range].sort((a, b) => a.start.localeCompare(b.start));
+    absenceStart = '';
+    absenceEnd = '';
+    return true;
+  }
 
   const available = $derived.by(() => {
     if (editor.kind !== 'member') return [];
@@ -54,6 +98,25 @@
 
   const copy = $derived.by(() => {
     switch (editor.kind) {
+      case 'duplicate':
+        return {
+          title: 'Aufgabe duplizieren',
+          description:
+            'Beschreibung, Teilnehmer und Wiederholung werden kopiert. Auswahlstände beginnen bei 0; Verlauf und aktuelle Auswahl bleiben leer. Die Kopie ist aktiv.',
+          submit: 'Kopie anlegen',
+        };
+      case 'manual':
+        return {
+          title: 'Manuell übernehmen',
+          description: `Wähle eine verfügbare Person für „${editor.task.name}“, unabhängig vom niedrigsten Stand. Ihr Auswahlstand steigt um 1; die Übernahme bleibt im Verlauf erkennbar.`,
+          submit: 'Übernahme speichern',
+        };
+      case 'absences':
+        return {
+          title: 'Abwesenheiten planen',
+          description: `${editor.person.name} pausiert in diesen Zeiträumen einschließlich Start- und Enddatum in allen Aufgaben. Danach ist die Person automatisch wieder verfügbar, sofern ihre Zuordnung aktiv ist. Auswahlstände bleiben erhalten.`,
+          submit: 'Abwesenheiten speichern',
+        };
       case 'task':
         return {
           title: editor.task ? 'Aufgabe bearbeiten' : 'Neue Aufgabe',
@@ -109,6 +172,28 @@
   async function save(): Promise<void> {
     try {
       switch (editor.kind) {
+        case 'duplicate': {
+          const result = await api<TaskDetail>(`/api/tasks/${editor.task.id}/duplicate`, 'POST', {
+            name: name.trim(),
+            expectedVersion: editor.task.version,
+          });
+          await onsaved('Aufgabe dupliziert.', `/tasks/${result.id}`);
+          break;
+        }
+        case 'manual': {
+          if (!participantId) throw new Error('Bitte wähle eine verfügbare Person aus.');
+          onmanual(Number(participantId));
+          return;
+        }
+        case 'absences': {
+          if ((absenceStart || absenceEnd) && !addAbsence()) throw new Error(absenceError);
+          await api<Participant>(`/api/participants/${editor.person.id}/absences`, 'PATCH', {
+            absences,
+            expectedVersion: editor.person.availabilityVersion ?? 0,
+          });
+          await onsaved('Abwesenheiten gespeichert.');
+          break;
+        }
         case 'task': {
           const task = editor.task;
           const result = await api<TaskDetail>(
@@ -117,6 +202,8 @@
             {
               name: name.trim(),
               description: description.trim(),
+              schedule:
+                frequency === 'none' ? null : ({ frequency, startDate } satisfies TaskSchedule),
               ...(task
                 ? { expectedVersion: task.version }
                 : { participantIds: selectedParticipantIds }),
@@ -213,6 +300,7 @@
   description={copy.description}
   submitLabel={copy.submit}
   danger={editor.kind === 'undo' || editor.kind === 'remove-person'}
+  applicationValidation={editor.kind === 'absences'}
   onsubmit={save}
   {onclose}
 >
@@ -234,6 +322,30 @@
         rows="3"
         placeholder="Was gehört zu dieser Aufgabe?"></textarea>
     </div>
+    <div class="field">
+      <label for="{fieldId}-frequency">Wiederholung</label>
+      <select id="{fieldId}-frequency" bind:value={frequency}>
+        <option value="none">Keine</option><option value="weekly">Wöchentlich</option><option
+          value="monthly">Monatlich</option
+        >
+      </select>
+    </div>
+    {#if frequency !== 'none'}
+      <div class="field">
+        <label for="{fieldId}-start">Erster Termin</label><input
+          id="{fieldId}-start"
+          type="date"
+          bind:value={startDate}
+          min="0001-01-01"
+          max="9999-12-31"
+          required
+        />
+        <p class="hint">
+          Jede Übernahme setzt den nächsten Termin fort. Wöchentlich am selben Wochentag; monatlich
+          am selben Tag, in kürzeren Monaten am Monatsende. Verpasste Termine werden übersprungen.
+        </p>
+      </div>
+    {/if}
     {#if !editor.task}
       <fieldset class="participant-picker" aria-describedby="{fieldId}-participants-hint">
         <legend>Teilnehmer auswählen (optional)</legend>
@@ -272,6 +384,80 @@
         {/if}
       </fieldset>
     {/if}
+  {:else if editor.kind === 'duplicate'}
+    <div class="field">
+      <label for="{fieldId}-name">Name der Kopie</label><input
+        id="{fieldId}-name"
+        bind:value={name}
+        required
+        maxlength="100"
+      />
+    </div>
+  {:else if editor.kind === 'manual'}
+    <div class="field">
+      <label for="{fieldId}-manual">Person für die Übernahme</label>
+      <select id="{fieldId}-manual" bind:value={participantId} required
+        ><option value="" disabled>Person auswählen …</option>
+        {#each editor.task.members.filter((member) => member.active && !member.absent) as member (member.id)}<option
+            value={String(member.id)}>{member.name} · Stand {member.count}</option
+          >{/each}
+      </select>
+    </div>
+  {:else if editor.kind === 'absences'}
+    <div class="field">
+      <label for="{fieldId}-absence-start">Startdatum</label><input
+        bind:this={absenceInput}
+        id="{fieldId}-absence-start"
+        type="date"
+        bind:value={absenceStart}
+        min="0001-01-01"
+        max="9999-12-31"
+        aria-invalid={!!absenceError}
+        aria-describedby={absenceError ? `${fieldId}-absence-error` : undefined}
+      />
+    </div>
+    <div class="field">
+      <label for="{fieldId}-absence-end">Enddatum</label><input
+        id="{fieldId}-absence-end"
+        type="date"
+        bind:value={absenceEnd}
+        min={absenceStart || '0001-01-01'}
+        max="9999-12-31"
+        aria-invalid={!!absenceError}
+        aria-describedby={absenceError ? `${fieldId}-absence-error` : undefined}
+      />
+    </div>
+    {#if absenceError}<p
+        id="{fieldId}-absence-error"
+        class="absence-help absence-error"
+        role="alert"
+      >
+        {absenceError}
+      </p>{/if}
+    <button class="button secondary small" type="button" onclick={addAbsence}
+      >Zeitraum hinzufügen</button
+    >
+    <p class="absence-help">Änderungen werden erst mit „Abwesenheiten speichern“ übernommen.</p>
+    {#if absenceRows.length}
+      {#snippet dates(range: Absence & { id: string })}<p class="list-description">
+          {formatDay(range.start)} – {formatDay(range.end)}
+        </p>{/snippet}
+      {#snippet remove(range: Absence & { id: string })}<button
+          type="button"
+          class="button quiet small"
+          aria-label="Abwesenheit ab {formatDay(range.start)} entfernen"
+          onclick={() => (absences = absences.filter((saved) => saved.start !== range.start))}
+          >Entfernen</button
+        >{/snippet}
+      <DataList
+        label="Geplante Abwesenheiten"
+        items={absenceRows}
+        columns={[
+          { label: 'Zeitraum', content: dates },
+          { label: 'Aktion', content: remove },
+        ]}
+      />
+    {:else}<p class="absence-help">Keine Abwesenheiten geplant.</p>{/if}
   {:else if editor.kind === 'person'}
     <div class="field">
       <label for="{fieldId}-name">Anzeigename</label><input
@@ -340,6 +526,15 @@
 </FormModal>
 
 <style>
+  .absence-help {
+    margin-block: 12px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .absence-error {
+    color: var(--danger);
+  }
   .participant-picker {
     min-width: 0;
     margin: 0;

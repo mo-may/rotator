@@ -20,7 +20,7 @@
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const mode = {
     quick: snapshot.quick,
-    direct: snapshot.draw.method === 'direct' || snapshot.draw.candidates.length === 1,
+    direct: snapshot.draw.method !== 'random' || snapshot.draw.candidates.length === 1,
     reducedMotion,
   };
   const pilots = snapshot.draw.candidates.map((candidate) => ({
@@ -86,7 +86,13 @@
   <div bind:this={layout} class="mission-layout">
     <div class="mission-top">
       <span class="brand"><span class="orbit-mark" aria-hidden="true"></span>Rotator</span>
-      <span class="mission-type">{mode.direct ? 'DIREKTE ZUWEISUNG' : 'TEAMMISSION'}</span>
+      <span class="mission-type"
+        >{draw.method === 'manual'
+          ? 'MANUELLE ÜBERNAHME'
+          : mode.direct
+            ? 'DIREKTE ZUWEISUNG'
+            : 'TEAMMISSION'}</span
+      >
       {#if fullscreenAvailable}
         <button class="fullscreen" onclick={toggleFullscreen}>⛶ Vollbild</button>
       {/if}
@@ -436,8 +442,8 @@
     font-weight: 500;
   }
   .mission-bottom .button:hover {
-    border-color: var(--surface-muted);
-    background: var(--surface-muted);
+    border-color: var(--on-dark);
+    background: var(--on-dark);
     transform: none;
   }
   button:focus-visible {

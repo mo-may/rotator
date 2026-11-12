@@ -26,9 +26,9 @@
   --lilac: #be97c6;
   --lavender: #8661c1;
   --charcoal: #4b5267;
-  --paper: var(--indigo);
-  --surface: color-mix(in srgb, var(--petal) 8%, white);
-  --surface-muted: color-mix(in srgb, var(--lilac) 18%, var(--surface));
+  --paper: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: color-mix(in srgb, var(--charcoal) 3%, var(--surface));
   --ink: var(--indigo);
   --muted: color-mix(in srgb, var(--charcoal) 90%, var(--surface));
   --line: color-mix(in srgb, var(--charcoal) 24%, var(--surface));
@@ -36,6 +36,9 @@
   --primary: var(--lavender);
   --on-primary: white;
   --primary-hover: color-mix(in srgb, var(--lavender) 78%, var(--indigo));
+  --accent-text: var(--primary-hover);
+  --focus-ring: var(--indigo);
+  --focus-halo: var(--petal);
   --tint: color-mix(in srgb, var(--lavender) 10%, var(--surface));
   --night: color-mix(in srgb, var(--indigo) 88%, black);
   --on-dark: color-mix(in srgb, var(--petal) 12%, white);
@@ -44,7 +47,8 @@
   --danger: color-mix(in srgb, var(--indigo) 80%, var(--petal));
   --danger-tint: color-mix(in srgb, var(--petal) 25%, var(--surface));
   --warning-tint: color-mix(in srgb, var(--lilac) 20%, var(--surface));
-  --radius: 8px;
+  --radius: 6px;
+  --page-max: 1120px;
   --font-body: 'Fira Code', Consolas, monospace;
   --font-display: 'Fira Code', Consolas, monospace;
   --font-mono: 'Fira Code', Consolas, monospace;
@@ -54,7 +58,7 @@
   --scroll-hover: var(--primary-hover);
   --scroll-active: var(--indigo);
   font-family: var(--font-body);
-  color: var(--on-dark);
+  color: var(--ink);
   background: var(--paper);
   font-size: 16px;
   line-height: 1.6;
@@ -62,6 +66,26 @@
   font-variant-ligatures: none;
   color-scheme: light;
   scrollbar-gutter: stable;
+}
+
+:root[data-theme='dark'] {
+  --paper: color-mix(in srgb, var(--indigo) 65%, black);
+  --surface: color-mix(in srgb, var(--indigo) 82%, black);
+  --surface-muted: color-mix(in srgb, var(--charcoal) 28%, var(--surface));
+  --ink: var(--on-dark);
+  --muted: color-mix(in srgb, var(--on-dark) 68%, var(--charcoal));
+  --line: color-mix(in srgb, var(--lilac) 32%, var(--surface));
+  --control-line: color-mix(in srgb, var(--lilac) 70%, var(--surface));
+  --accent-text: var(--lilac);
+  --focus-ring: var(--lilac);
+  --focus-halo: var(--surface);
+  --tint: color-mix(in srgb, var(--lavender) 18%, var(--surface));
+  --danger: var(--petal);
+  --danger-tint: color-mix(in srgb, var(--petal) 12%, var(--surface));
+  --warning-tint: color-mix(in srgb, var(--lilac) 15%, var(--surface));
+  --scroll-hover: var(--lilac);
+  --scroll-active: var(--petal);
+  color-scheme: dark;
 }
 
 * {
@@ -133,12 +157,12 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid var(--indigo);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 4px;
-  box-shadow: 0 0 0 7px var(--petal);
+  box-shadow: 0 0 0 7px var(--focus-halo);
 }
 ::selection {
-  color: var(--ink);
+  color: var(--indigo);
   background: var(--petal);
 }
 
@@ -227,16 +251,19 @@ textarea:focus-visible {
   margin-bottom: 30px;
 }
 .page-heading h1 {
-  font-size: clamp(34px, 4vw, 46px);
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 .page-heading .eyebrow {
   margin-bottom: 13px;
-  color: var(--on-dark-muted);
+  color: var(--muted);
 }
 .page-description {
   max-width: 700px;
-  margin-top: 13px;
-  color: var(--on-dark-muted);
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -256,7 +283,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 25px;
+  font-size: 18px;
 }
 .count-chip {
   display: inline-grid;
@@ -264,8 +291,8 @@ textarea:focus-visible {
   height: 28px;
   padding: 0 6px;
   place-items: center;
-  border: 1px solid var(--dark-line);
-  border-radius: 5px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: 13px var(--font-mono);
@@ -282,7 +309,7 @@ textarea:focus-visible {
   padding: 4px 9px;
   border-radius: 4px;
   background: var(--tint);
-  color: var(--primary-hover);
+  color: var(--accent-text);
   font-size: 12px;
   font-weight: 650;
 }
@@ -319,14 +346,14 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 13px;
-  color: var(--on-dark-muted);
+  color: var(--muted);
 }
 .spinner {
   display: inline-block;
   width: 19px;
   height: 19px;
-  border: 2px solid var(--dark-line);
-  border-top-color: var(--petal);
+  border: 2px solid var(--line);
+  border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 800ms linear infinite;
 }
@@ -354,7 +381,8 @@ textarea:focus-visible {
 }
 .field textarea {
   min-height: 140px;
-  resize: vertical;
+  resize: none;
+  field-sizing: content;
 }
 .field .hint {
   color: var(--muted);
@@ -372,7 +400,7 @@ textarea:focus-visible {
     gap: 20px;
   }
   .page-heading h1 {
-    font-size: 35px;
+    font-size: 26px;
   }
   .page-description {
     font-size: 15px;
@@ -381,7 +409,7 @@ textarea:focus-visible {
     align-items: flex-start;
   }
   .section-heading h2 {
-    font-size: 23px;
+    font-size: 18px;
   }
   .button {
     padding: 10px 13px;
@@ -414,4 +442,26 @@ textarea:focus-visible {
   textarea:focus-visible {
     outline-color: Highlight;
   }
+}
+
+.heading-count {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+input[type='checkbox'] {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+summary {
+  cursor: pointer;
+}
+summary:hover {
+  color: var(--accent-text);
+}
+summary:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 4px;
 }

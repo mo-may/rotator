@@ -12,7 +12,10 @@ import {
   participantRemovalRequest,
   participantRequest,
   undoRequest,
+  statsRequest,
   updateTaskRequest,
+  absencesRequest,
+  duplicateTaskRequest,
 } from './backend/request-schemas';
 import { openDatabase } from './db';
 import { ChooserService, createService, DomainError } from './service';
@@ -34,7 +37,7 @@ function id(value: string): number {
 /** Supplied database connections remain owned by the caller, including in tests. */
 export function createApp(options: AppOptions = {}) {
   const db = options.db ?? openDatabase();
-  const service = options.service ?? createService(db);
+  const service = options.service ?? createService(db, { timeZone: options.auth?.timeZone });
   const app = new Hono();
 
   app.onError((error, context) => {
@@ -101,6 +104,15 @@ export function createApp(options: AppOptions = {}) {
   app.post('/api/tasks', createTaskRequest, (context) => {
     return context.json(service.createTask(context.req.valid('json')), 201);
   });
+  app.post('/api/tasks/:id/duplicate', duplicateTaskRequest, (context) =>
+    context.json(
+      service.duplicateTask(id(context.req.param('id')), context.req.valid('json')),
+      201,
+    ),
+  );
+  app.patch('/api/participants/:id/absences', absencesRequest, (context) =>
+    context.json(service.setAbsences(id(context.req.param('id')), context.req.valid('json'))),
+  );
   app.patch('/api/tasks/:id', updateTaskRequest, (context) => {
     return context.json(service.updateTask(id(context.req.param('id')), context.req.valid('json')));
   });
@@ -155,6 +167,17 @@ export function createApp(options: AppOptions = {}) {
     );
   });
 
+  app.get('/api/stats', statsRequest, (context) => {
+    const query = context.req.valid('query');
+    return context.json(
+      service.stats(
+        query.period,
+        query.start && query.end ? { start: query.start, end: query.end } : undefined,
+        options.auth?.timeZone ?? (process.env.APP_TIMEZONE || 'Europe/Berlin'),
+      ),
+    );
+  });
+
   app.all('/api/*', (context) =>
     context.json(
       {
@@ -168,6 +191,7 @@ export function createApp(options: AppOptions = {}) {
   app.get('/', async (context) => context.html(await index()));
   app.get('/tasks/:id', async (context) => context.html(await index()));
   app.get('/team', async (context) => context.html(await index()));
+  app.get('/stats', async (context) => context.html(await index()));
   app.get('/participants', async (context) => context.html(await index()));
   app.get('/assets/*', serveStatic({ root: './dist' }));
   app.get('/favicon.svg', serveStatic({ root: './dist' }));
