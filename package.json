@@ -1,0 +1,42 @@
+{
+  "name": "rotator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "bun": ">=1.4.4"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others -n api,web \"bun --watch src/server.ts\" \"vite\"",
+    "dev:api": "bun --watch src/server.ts",
+    "dev:web": "vite",
+    "start": "bun src/server.ts",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && svelte-check --tsconfig ./frontend/tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "bun test tests",
+    "test:e2e": "bun run build && playwright test",
+    "test:docker": "bun scripts/docker-smoke.ts",
+    "backup": "bun src/cli.ts backup",
+    "check:db": "bun src/cli.ts check"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "hono": "^4.10.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "^1.3.0",
+    "concurrently": "^10.0.7",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.8",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  }
+}

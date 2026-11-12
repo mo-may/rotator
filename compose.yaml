@@ -1,0 +1,32 @@
+name: rotator
+
+services:
+  rotator:
+    container_name: rotator
+    image: rotator
+    build:
+      context: .
+    ports:
+      - '127.0.0.1:${CHOOSER_PORT:-8080}:3000'
+    environment:
+      HOST: 0.0.0.0
+      PORT: '3000'
+      DATABASE_PATH: /data/chooser.sqlite3
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-team}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Berlin}
+    volumes:
+      - chooser-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  chooser-data:
+    # Keep the existing data volume when the project directory/name changes.
+    name: chooser_chooser-data
